@@ -1,0 +1,16 @@
+searches:
+  - query: "LLM agent tool selection extensible agent architecture"
+    num_results: 80
+    venues:
+      neurips: [2025]
+      iclr: [2025, 2026]
+      icml: [2025]
+      acl: [2025]
+      emnlp: [2025]
+output:
+  root: ./deep-research-output/agent-skill-host-architecture/phase1_frontier/search_results
+  overwrite: true
+
+# The installed deep-research package does not include paper_finder.py.
+# Phase 1 therefore uses its documented Semantic Scholar/arXiv fallback plus
+# official conference proceedings searches.

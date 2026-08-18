@@ -1,0 +1,12 @@
+searches:
+  - query: "coding agents repository instructions requirements clarification specification drift"
+    num_results: 60
+    venues:
+      neurips: [2025, 2026]
+      iclr: [2025, 2026]
+      icml: [2025, 2026]
+      acl: [2025, 2026]
+      emnlp: [2025]
+output:
+  root: ./deep-research-output/aster-decision-audit/phase1_frontier/search_results
+  overwrite: true

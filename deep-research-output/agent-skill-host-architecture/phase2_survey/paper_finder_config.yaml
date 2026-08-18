@@ -1,0 +1,15 @@
+searches:
+  - query: "agent skills tool retrieval host compatibility"
+    num_results: 100
+    years: [2023, 2024, 2025, 2026]
+  - query: "LLM agent security tool use prompt injection permissions"
+    num_results: 100
+    years: [2023, 2024, 2025, 2026]
+  - query: "plugin architecture variability declarative configuration"
+    num_results: 50
+output:
+  root: ./deep-research-output/agent-skill-host-architecture/phase2_survey/search_results
+  overwrite: true
+
+# paper_finder.py is absent from the installed skill package. Searches used the
+# documented WebSearch/WebFetch fallback over official paper and proceedings pages.

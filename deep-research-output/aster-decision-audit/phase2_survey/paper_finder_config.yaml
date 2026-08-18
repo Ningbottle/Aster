@@ -1,0 +1,13 @@
+searches:
+  - query: "coding agent context requirements instruction constraints specification verification"
+    num_results: 100
+    venues:
+      neurips: [2024, 2025, 2026]
+      iclr: [2024, 2025, 2026]
+      icml: [2024, 2025, 2026]
+      acl: [2024, 2025, 2026]
+      emnlp: [2024, 2025]
+      naacl: [2024, 2025]
+output:
+  root: ./deep-research-output/aster-decision-audit/phase2_survey/search_results
+  overwrite: true

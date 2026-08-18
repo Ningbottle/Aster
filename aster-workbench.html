@@ -1,0 +1,1713 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Aster 工作台</title>
+<style>
+  :root{
+    --bg: oklch(0.972 0.003 95);
+    --surface: oklch(0.996 0.001 95);
+    --surface-2: oklch(0.955 0.004 95);
+    --fg: oklch(0.25 0.012 265);
+    --muted: oklch(0.44 0.012 265);
+    --faint: oklch(0.46 0.010 265);
+    --border: oklch(0.905 0.005 265);
+    --border-strong: oklch(0.85 0.006 265);
+    --accent: oklch(0.50 0.115 255);
+    --accent-hover: oklch(0.44 0.115 255);
+    --accent-soft: oklch(0.95 0.025 255);
+    --success: oklch(0.60 0.13 152);
+    --warn: oklch(0.64 0.12 78);
+    --danger: oklch(0.50 0.16 27);
+    --font-body: "Segoe UI Variable Text","Segoe UI",system-ui,"Microsoft YaHei",sans-serif;
+    --font-display: "Segoe UI Variable Display","Segoe UI Variable Text","Segoe UI",system-ui,"Microsoft YaHei",sans-serif;
+    --font-mono: "Cascadia Code","Cascadia Mono",Consolas,"JetBrains Mono",monospace;
+    --r-sm: 6px; --r-md: 8px; --r-lg: 12px;
+    --shadow-1: 0 1px 2px oklch(0.25 0.01 265 / 0.05);
+    --shadow-2: 0 4px 16px oklch(0.25 0.01 265 / 0.10);
+    --shadow-modal: 0 16px 48px oklch(0.25 0.01 265 / 0.22);
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  html,body{height:100%}
+  body{
+    font-family:var(--font-body);
+    font-size:13.5px;line-height:1.65;
+    color:var(--fg);background:var(--bg);
+    overflow:hidden;
+    -webkit-font-smoothing:antialiased;
+  }
+  button{font-family:inherit;font-size:inherit;color:inherit;background:none;border:none;cursor:pointer}
+  button:focus-visible,[tabindex]:focus-visible,input:focus-visible,textarea:focus-visible{
+    outline:2px solid var(--accent);outline-offset:1px;border-radius:var(--r-sm);
+  }
+  ::selection{background:var(--accent-soft)}
+
+  /* ============ 窗口框架 ============ */
+  .window{height:100vh;display:flex;flex-direction:column}
+  .titlebar{
+    height:40px;flex:none;display:flex;align-items:center;
+    background:var(--surface-2);border-bottom:1px solid var(--border);
+    padding-left:12px;user-select:none;
+  }
+  .titlebar .app-mark{
+    display:flex;align-items:center;gap:8px;
+    font-family:var(--font-display);font-weight:600;font-size:12.5px;letter-spacing:0.02em;
+  }
+  .titlebar .app-mark .dot-logo{
+    width:16px;height:16px;border-radius:5px;background:var(--accent);
+    display:grid;place-items:center;color:var(--surface);font-size:10px;font-weight:700;
+  }
+  .titlebar .menus{display:flex;gap:2px;margin-left:20px}
+  .titlebar .menus button{
+    font-size:12px;color:var(--muted);padding:4px 10px;border-radius:var(--r-sm);
+  }
+  .titlebar .menus button:hover{background:var(--border);color:var(--fg)}
+  .titlebar .drag{flex:1;height:100%;display:flex;align-items:center;justify-content:center;position:relative;min-width:0;padding:0 8px}
+  .titlebar .app-mark{cursor:pointer}
+  .tb-tabs{display:flex;align-items:center;gap:4px}
+  .tb-tab{
+    display:flex;align-items:center;gap:7px;min-width:0;flex:0 1 auto;
+    font-size:12px;color:var(--muted);padding:4px 8px 4px 12px;border-radius:7px;
+    letter-spacing:0.02em;border:1px solid transparent;
+  }
+  .tb-tab svg{width:13px;height:13px;flex:none}
+  .tb-tab .tb-label{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+  .tb-tab:hover{background:var(--border);color:var(--fg)}
+  .tb-tab.active{background:var(--surface);color:var(--fg);border-color:var(--border-strong);box-shadow:var(--shadow-1);font-weight:550}
+  .tb-x{
+    width:16px;height:16px;border-radius:4px;display:grid;place-items:center;
+    color:var(--faint);flex:none;
+  }
+  .tb-x svg{width:9px;height:9px}
+  .tb-x:hover{background:var(--border-strong);color:var(--fg)}
+  .tb-tab:not(.active) .tb-x{opacity:0}
+  .tb-tab:hover .tb-x,.tb-tab.active .tb-x{opacity:1}
+  .tb-add{
+    width:24px;height:24px;border-radius:6px;display:grid;place-items:center;color:var(--muted);flex:none;
+  }
+  .tb-add:hover{background:var(--border);color:var(--fg)}
+  .tb-add svg{width:12px;height:12px}
+  .tb-menu{
+    position:absolute;top:34px;left:50%;transform:translateX(-50%);z-index:60;
+    background:var(--surface);border:1px solid var(--border-strong);border-radius:var(--r-md);
+    box-shadow:var(--shadow-2);padding:4px;min-width:190px;
+  }
+  .tb-menu button{
+    display:flex;align-items:center;gap:8px;width:100%;text-align:left;
+    padding:6px 10px;border-radius:var(--r-sm);font-size:12.5px;color:var(--fg);
+  }
+  .tb-menu button svg{width:13px;height:13px;color:var(--muted);flex:none}
+  .tb-menu button:hover{background:var(--surface-2)}
+  .tb-menu .tb-menu-state{margin-left:auto;font-size:10.5px;color:var(--faint)}
+  .caption-btns{display:flex;height:100%}
+  .caption-btns button{
+    width:46px;height:100%;display:grid;place-items:center;color:var(--muted);
+  }
+  .caption-btns button:hover{background:var(--border);color:var(--fg)}
+  .caption-btns button.close:hover{background:var(--danger);color:var(--surface)}
+  .caption-btns svg{width:10px;height:10px}
+
+  .shell{flex:1;display:flex;min-height:0}
+
+  /* ============ 侧边栏 ============ */
+  .sidebar{
+    width:248px;flex:none;display:flex;flex-direction:column;
+    background:var(--surface-2);border-right:1px solid var(--border);
+    padding:8px;
+  }
+  .nav-group{display:flex;flex-direction:column;gap:1px}
+  .nav-item{
+    display:flex;align-items:center;gap:10px;
+    padding:7px 10px;border-radius:var(--r-sm);
+    font-size:13px;color:var(--fg);text-align:left;width:100%;
+    position:relative;
+  }
+  .nav-item svg{width:15px;height:15px;flex:none;color:var(--muted)}
+  .nav-item:hover{background:var(--border)}
+  .nav-item.active{background:var(--surface);box-shadow:var(--shadow-1);font-weight:550}
+  .nav-item.active::before{
+    content:"";position:absolute;left:0;top:20%;bottom:20%;width:2.5px;
+    border-radius:2px;background:var(--fg);
+  }
+  .nav-item.active svg{color:var(--fg)}
+  .nav-item .badge{
+    margin-left:auto;font-size:10.5px;color:var(--faint);
+    background:var(--border);border-radius:10px;padding:0 7px;line-height:16px;
+  }
+  .side-section{
+    margin-top:18px;padding:0 10px 4px;
+    font-size:11px;letter-spacing:0.06em;color:var(--faint);font-weight:600;
+    display:flex;align-items:center;justify-content:space-between;
+  }
+  .side-section button{color:var(--faint);font-size:14px;line-height:1;padding:0 2px;border-radius:4px}
+  .side-section button:hover{color:var(--fg);background:var(--border)}
+  .proj-item{
+    display:flex;align-items:center;gap:8px;padding:5px 10px;border-radius:var(--r-sm);
+    font-size:12.5px;color:var(--muted);width:100%;text-align:left;
+  }
+  .proj-item:hover{background:var(--border);color:var(--fg)}
+  .proj-item.current{color:var(--fg);font-weight:550}
+  .proj-item .folder-ic{width:14px;height:14px;flex:none;color:var(--faint)}
+  .proj-item .sub{display:block;font-size:11px;color:var(--faint)}
+  .perm-item{cursor:default}
+  .perm-item:hover{background:transparent;color:var(--muted)}
+  .side-scroll{flex:1;overflow-y:auto;min-height:0}
+  .side-foot{
+    flex:none;border-top:1px solid var(--border);padding:8px 4px 2px;
+    display:flex;align-items:center;gap:8px;
+  }
+  .avatar{
+    width:24px;height:24px;border-radius:50%;flex:none;
+    background:var(--accent);
+    color:#fff;display:grid;place-items:center;font-size:11px;font-weight:600;
+  }
+  .side-foot .name{font-size:12.5px;font-weight:550}
+  .side-foot .settings-btn{margin-left:auto;color:var(--muted);padding:5px;border-radius:var(--r-sm)}
+  .side-foot .settings-btn:hover{background:var(--border);color:var(--fg)}
+  .side-foot .settings-btn svg{width:15px;height:15px;display:block}
+
+  /* ============ 主区 ============ */
+  .main{flex:1;min-width:0;display:flex;flex-direction:column;background:var(--bg)}
+  .view{flex:1;min-height:0;display:none;flex-direction:column;overflow:hidden}
+  .view.active{display:flex}
+  .view-scroll{flex:1;overflow-y:auto;min-height:0}
+
+  .page-head{
+    flex:none;padding:18px 28px 0;display:flex;align-items:flex-end;justify-content:space-between;gap:16px;
+  }
+  .page-head h1{
+    font-family:var(--font-display);font-size:19px;font-weight:600;line-height:1.35;letter-spacing:0;
+  }
+  .page-head .desc{font-size:12.5px;color:var(--muted);margin-top:2px}
+  .page-body{padding:16px 28px 32px}
+
+  /* ============ 通用元件 ============ */
+  .btn{
+    display:inline-flex;align-items:center;gap:6px;
+    height:30px;padding:0 13px;border-radius:var(--r-sm);
+    font-size:12.5px;font-weight:550;letter-spacing:0.02em;
+    border:1px solid var(--border-strong);background:var(--surface);color:var(--fg);
+    transition:background .12s ease,border-color .12s ease;
+    white-space:nowrap;
+  }
+  .btn:hover{background:var(--surface-2)}
+  .btn:active{transform:translateY(1px)}
+  .btn.primary{background:var(--accent);border-color:var(--accent);color:var(--surface)}
+  .btn.primary:hover{background:var(--accent-hover);border-color:var(--accent-hover)}
+  .btn.danger-ghost{color:var(--danger);border-color:var(--border-strong)}
+  .btn.danger-ghost:hover{background:oklch(0.96 0.02 27)}
+  .btn.sm{height:26px;padding:0 10px;font-size:12px}
+  .btn:disabled{opacity:.5;cursor:default;transform:none}
+  .btn svg{width:13px;height:13px}
+
+  .chip{
+    display:inline-flex;align-items:center;gap:6px;
+    height:26px;padding:0 10px;border-radius:999px;
+    font-size:12px;color:var(--muted);
+    border:1px solid var(--border);background:var(--surface);
+  }
+  .chip:hover{border-color:var(--border-strong);color:var(--fg)}
+  .chip.on{background:var(--fg);border-color:var(--fg);color:var(--surface)}
+  .chip .count{font-size:10.5px;color:var(--faint)}
+  .chip.on .count{color:oklch(0.85 0.01 265)}
+
+  .tag{
+    display:inline-flex;align-items:center;height:20px;padding:0 8px;border-radius:5px;
+    font-size:11px;font-weight:550;letter-spacing:0.02em;
+  }
+  .tag.ok{background:oklch(0.94 0.04 152);color:oklch(0.42 0.11 152)}
+  .tag.warn{background:oklch(0.95 0.05 78);color:oklch(0.45 0.10 70)}
+  .tag.err{background:oklch(0.95 0.03 27);color:oklch(0.46 0.15 27)}
+  .tag.neutral{background:var(--surface-2);color:var(--muted)}
+  .tag.info{background:var(--accent-soft);color:var(--accent-hover)}
+
+  .card{
+    background:var(--surface);border:1px solid var(--border);
+    border-radius:var(--r-lg);box-shadow:var(--shadow-1);
+  }
+  .card-pad{padding:16px 18px}
+  .mono{font-family:var(--font-mono);font-size:12px}
+  .muted{color:var(--muted)}
+  .faint{color:var(--faint)}
+
+  .table{width:100%;border-collapse:collapse;font-size:12.5px}
+  .table th{
+    text-align:left;font-size:11px;font-weight:600;letter-spacing:0.04em;color:var(--faint);
+    padding:8px 12px;border-bottom:1px solid var(--border);white-space:nowrap;
+  }
+  .table td{padding:8px 12px;border-bottom:1px solid var(--border);vertical-align:top}
+  .table tr:last-child td{border-bottom:none}
+  .table tbody tr:hover{background:var(--surface-2)}
+
+  .status-dot{width:7px;height:7px;border-radius:50%;display:inline-block;flex:none}
+  .status-dot.run{background:var(--success);box-shadow:0 0 0 3px oklch(0.60 0.13 152 / 0.18)}
+  .status-dot.idle{background:var(--faint)}
+  .status-dot.warn{background:var(--warn)}
+  .status-dot.err{background:var(--danger)}
+
+  /* ============ 首页 / 新对话 ============ */
+  .home-wrap{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:40px 28px;overflow-y:auto}
+  .home-inner{width:100%;max-width:680px;display:flex;flex-direction:column;align-items:center}
+  .home-title{
+    font-family:var(--font-display);font-size:26px;font-weight:600;line-height:1.35;
+    text-align:center;margin-bottom:6px;
+  }
+  .home-sub{font-size:13px;color:var(--muted);margin-bottom:30px;text-align:center}
+  .composer{
+    width:100%;background:var(--surface);border:1px solid var(--border-strong);
+    border-radius:14px;box-shadow:var(--shadow-2);overflow:hidden;
+    transition:border-color .12s ease,box-shadow .12s ease;
+  }
+  .composer .ctx-bar{
+    display:flex;align-items:center;gap:8px;
+    padding:8px 12px;border-bottom:1px solid var(--border);background:var(--surface-2);
+  }
+  .ctx-chip{
+    display:inline-flex;align-items:center;gap:5px;font-size:11.5px;color:var(--muted);
+    padding:2px 8px;border-radius:5px;
+  }
+  .ctx-chip svg{width:12px;height:12px}
+  .ctx-chip b{font-weight:550;color:var(--fg)}
+  .composer textarea{
+    width:100%;border:none;resize:none;padding:14px 16px 6px;
+    font-family:inherit;font-size:13.5px;line-height:1.7;color:var(--fg);
+    background:transparent;min-height:74px;
+  }
+  .composer textarea::placeholder{color:var(--faint)}
+  .composer textarea:focus{outline:none}
+  .composer:focus-within{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft),var(--shadow-2)}
+  .composer .composer-foot{
+    display:flex;align-items:center;gap:8px;padding:8px 12px 10px;
+  }
+  .composer .icon-btn{
+    width:28px;height:28px;border-radius:var(--r-sm);display:grid;place-items:center;color:var(--muted);
+  }
+  .composer .icon-btn:hover{background:var(--surface-2);color:var(--fg)}
+  .composer .icon-btn svg{width:15px;height:15px}
+  .send-btn{
+    width:30px;height:30px;border-radius:50%;background:var(--accent);color:var(--surface);
+    display:grid;place-items:center;margin-left:auto;
+  }
+  .send-btn:hover{background:var(--accent-hover)}
+  .send-btn svg{width:14px;height:14px}
+  .suggest-row{display:flex;gap:8px;margin-top:16px;flex-wrap:wrap;justify-content:center}
+  .home-recents{margin-top:34px;width:100%;max-width:680px}
+  .home-recents h2{font-size:11px;letter-spacing:0.06em;color:var(--faint);font-weight:600;margin-bottom:8px}
+  .recent-row{
+    display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:var(--r-md);
+    font-size:12.5px;color:var(--muted);width:100%;text-align:left;
+  }
+  .recent-row:hover{background:var(--surface);color:var(--fg);box-shadow:var(--shadow-1)}
+  .recent-row .time{margin-left:auto;font-size:11px;color:var(--faint)}
+
+  /* ============ Aster 首页(展示界面) ============ */
+  .show-wrap{
+    flex:1;overflow-y:auto;min-height:0;padding:52px 40px 40px;
+    display:flex;flex-direction:column;align-items:center;
+  }
+  .show-inner{width:100%;max-width:920px}
+  .show-hero{text-align:center;margin-bottom:36px}
+  .show-title{font-family:var(--font-display);font-size:26px;font-weight:600;line-height:1.35;margin-bottom:8px}
+  .show-sub{font-size:13px;color:var(--muted);max-width:560px;margin:0 auto 20px}
+  .show-status{
+    display:flex;justify-content:center;gap:20px;flex-wrap:wrap;
+    font-size:12px;color:var(--muted);margin-top:20px;
+  }
+  .show-status .ss{display:inline-flex;align-items:center;gap:7px}
+  .show-status .mono{font-size:11px;color:var(--faint)}
+  .show-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px;margin-bottom:30px}
+  .ws-card{
+    padding:16px 18px;display:flex;flex-direction:column;gap:8px;text-align:left;
+    background:var(--surface);border:1px solid var(--border);border-radius:var(--r-lg);
+    box-shadow:var(--shadow-1);
+    transition:border-color .12s ease,box-shadow .16s ease;
+  }
+  .ws-card:hover{border-color:var(--border-strong);box-shadow:var(--shadow-2)}
+  .ws-card .ws-icon{
+    width:32px;height:32px;border-radius:8px;display:grid;place-items:center;flex:none;
+    background:var(--fg);color:var(--surface);font-family:var(--font-mono);font-size:11.5px;font-weight:700;
+  }
+  .ws-card .ws-name{font-size:13.5px;font-weight:600;font-family:var(--font-display)}
+  .ws-card .ws-desc{font-size:12px;color:var(--muted);line-height:1.65}
+  .ws-card .ws-go{
+    margin-top:auto;font-size:12px;color:var(--faint);
+    display:flex;align-items:center;gap:5px;
+  }
+  .ws-card:hover .ws-go{color:var(--fg)}
+  .ws-card .ws-go svg{width:12px;height:12px}
+  .show-cols{display:grid;grid-template-columns:1fr 1fr;gap:24px}
+  .show-cols h2{font-size:11px;letter-spacing:0.06em;color:var(--faint);font-weight:600;margin-bottom:6px}
+
+  /* ============ Pi 界面:新对话(compose)与会话(chat)两种状态 ============ */
+  [hidden]{display:none!important}
+  .pi-chat{flex:1;display:flex;flex-direction:column;min-height:0}
+  .pi-transcript{
+    flex:1;overflow-y:auto;padding:24px;min-height:0;
+    display:flex;flex-direction:column;align-items:center;
+  }
+  .msg{width:100%;max-width:680px;margin-bottom:16px}
+  .msg .role{font-size:11px;font-weight:600;letter-spacing:0.05em;color:var(--faint);margin-bottom:4px}
+  .msg .bubble{
+    background:var(--surface);border:1px solid var(--border);border-radius:var(--r-lg);
+    padding:12px 14px;font-size:13px;line-height:1.7;
+  }
+  .msg.user .bubble{background:var(--surface-2)}
+  .msg .tool-call{
+    margin-top:8px;border:1px solid var(--border);border-radius:var(--r-md);
+    background:var(--surface-2);padding:8px 10px;font-family:var(--font-mono);font-size:11.5px;color:var(--muted);
+    display:flex;align-items:center;gap:8px;
+  }
+  .pi-input{
+    flex:none;border-top:1px solid var(--border);padding:12px 24px;background:var(--surface);
+    display:flex;justify-content:center;
+  }
+  .pi-input-inner{flex:1;max-width:724px;display:flex;gap:10px;align-items:flex-end}
+  .pi-input textarea{
+    flex:1;border:1px solid var(--border-strong);border-radius:var(--r-md);
+    padding:9px 12px;font-family:inherit;font-size:13px;resize:none;min-height:38px;max-height:120px;
+    background:var(--surface);color:var(--fg);
+  }
+
+  /* ============ 侧边栏:三种模式(Pi 完整导航 / Skills 窄工具列 / DSH 无侧边栏) ============ */
+  .sidebar[hidden]{display:none}
+  .sidebar.slim{width:176px;padding:8px 6px}
+  .sidebar.slim .side-section{padding:0 8px 4px}
+  .sidebar.slim .tool-item{padding:6px 8px;font-size:12px}
+
+  /* ============ 侧边栏拖拽调宽 ============ */
+  .side-resize{width:6px;flex:none;cursor:col-resize;margin-left:-3px;position:relative;z-index:6;touch-action:none}
+  .side-resize::after{
+    content:"";position:absolute;left:2px;top:0;bottom:0;width:2px;border-radius:1px;
+    background:transparent;transition:background .12s ease;
+  }
+  .side-resize:hover::after,.side-resize.dragging::after{background:var(--faint)}
+
+  /* ============ 侧边栏:Skills 工具列表(仅 Skills-Hub 视图) ============ */
+  .tool-item{
+    display:flex;align-items:center;gap:8px;padding:5px 10px;border-radius:var(--r-sm);
+    font-size:12.5px;color:var(--muted);width:100%;text-align:left;
+  }
+  .tool-item:hover{background:var(--border);color:var(--fg)}
+  .tool-item.on{background:var(--surface);color:var(--fg);box-shadow:var(--shadow-1);font-weight:550}
+  .tool-item .count{margin-left:auto;font-size:10.5px;color:var(--faint)}
+  .tool-item .t-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+  /* ============ DSH 控制台排版 ============ */
+  .dsh-embed{flex:1;position:relative;min-height:0;background:var(--surface-2)}
+  .dsh-embed iframe{
+    position:absolute;inset:0;width:100%;height:100%;border:none;background:var(--surface);
+  }
+  .embed-fallback{
+    position:absolute;inset:0;z-index:2;background:var(--bg);
+    display:flex;flex-direction:column;
+    align-items:center;justify-content:center;gap:8px;text-align:center;padding:24px;
+  }
+  .embed-fallback .ef-title{font-size:13.5px;font-weight:600;color:var(--fg)}
+  .embed-fallback .ef-sub{font-size:12px;color:var(--muted);max-width:420px;line-height:1.7}
+  .embed-fallback .btn{margin-top:12px}
+
+  /* ============ Skills-Hub(工具 → skills 卡片 → skill 页) ============ */
+  .skills-grid{
+    display:grid;
+    grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:12px;
+  }
+  .skill-card{
+    background:var(--surface);border:1px solid var(--border);border-radius:var(--r-lg);
+    box-shadow:var(--shadow-1);padding:14px 16px;text-align:left;
+    display:flex;flex-direction:column;gap:6px;
+    transition:border-color .12s ease,box-shadow .16s ease;
+  }
+  .skill-card:hover{border-color:var(--border-strong);box-shadow:var(--shadow-2)}
+  .skill-card .sc-name{font-family:var(--font-mono);font-size:12.5px;font-weight:600;color:var(--fg)}
+  .skill-card .sc-desc{font-size:12px;color:var(--muted);line-height:1.6}
+  .skill-card .sc-foot{display:flex;align-items:center;gap:5px;margin-top:4px;flex-wrap:wrap}
+  .skill-card .sc-tool{font-size:10.5px;color:var(--muted);background:var(--surface-2);border-radius:4px;padding:1px 6px}
+  .skill-card .sc-date{margin-left:auto;font-size:10.5px;color:var(--faint)}
+  .skills-empty{
+    grid-column:1/-1;text-align:center;padding:48px 24px;color:var(--faint);font-size:12.5px;
+    border:1px dashed var(--border-strong);border-radius:var(--r-lg);
+  }
+
+  /* ---- skill 详情页(作用 / 流程 / 原文·译文) ---- */
+  .skill-page{display:flex;flex-direction:column;height:100%}
+  .skill-page[hidden]{display:none}
+  .skill-page .view-scroll{flex:1;min-height:0}
+  .sp-top{
+    display:flex;align-items:center;gap:14px;flex:none;
+    padding:12px 28px;border-bottom:1px solid var(--border);background:var(--surface);
+  }
+  .sp-back{
+    display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 10px;
+    font-size:12px;color:var(--muted);border-radius:var(--r-md);
+  }
+  .sp-back:hover{background:var(--surface-2);color:var(--fg)}
+  .sp-back svg{width:12px;height:12px}
+  .sp-title{min-width:0}
+  .sp-name{font-family:var(--font-mono);font-size:14.5px;font-weight:600;color:var(--fg);word-break:break-all}
+  .sp-meta{font-size:11.5px;color:var(--faint);margin-top:2px}
+  .seg{
+    margin-left:auto;flex:none;display:flex;gap:2px;padding:2px;
+    background:var(--surface-2);border:1px solid var(--border);border-radius:8px;
+  }
+  .seg button{border-radius:6px;padding:4px 12px;font-size:11.5px;color:var(--muted)}
+  .seg button:hover{color:var(--fg)}
+  .seg button.on{background:var(--surface);color:var(--fg);border:1px solid var(--border-strong);box-shadow:var(--shadow-1);font-weight:550}
+  .sp-body{max-width:880px;display:flex;flex-direction:column;gap:14px}
+  .sp-block{padding:18px 20px}
+  .sp-block-h{
+    font-size:11px;font-weight:600;letter-spacing:0.06em;color:var(--faint);margin-bottom:10px;
+    display:flex;align-items:baseline;gap:8px;
+  }
+  .sp-block-h .hint{font-weight:400;letter-spacing:0;text-transform:none}
+  .sp-purpose-text{font-size:13.5px;line-height:1.75;color:var(--fg);margin-bottom:12px;max-width:65ch}
+  .sp-chips{display:flex;gap:5px;flex-wrap:wrap}
+  .flow{display:flex;align-items:center;flex-wrap:wrap;row-gap:10px}
+  .flow-node{
+    display:flex;align-items:center;gap:8px;padding:7px 12px;
+    background:var(--surface-2);border:1px solid var(--border-strong);border-radius:8px;
+    font-size:12px;color:var(--fg);
+  }
+  .flow-node .fn{
+    width:18px;height:18px;border-radius:50%;flex:none;display:grid;place-items:center;
+    background:var(--fg);color:var(--surface);font-size:10.5px;font-weight:600;
+  }
+  .flow-arrow{width:22px;flex:none;display:grid;place-items:center;color:var(--faint)}
+  .flow-arrow svg{width:12px;height:12px}
+  .md{font-size:13.5px;line-height:1.75;color:var(--fg);max-width:72ch}
+  .md h1{font-size:19px;font-weight:650;line-height:1.35;margin:20px 0 10px}
+  .md h1:first-child{margin-top:0}
+  .md h2{font-size:15px;font-weight:600;line-height:1.4;margin:18px 0 8px}
+  .md h3{font-size:13.5px;font-weight:600;margin:14px 0 6px}
+  .md p{margin:8px 0}
+  .md ul,.md ol{margin:8px 0;padding-left:22px}
+  .md li{margin:4px 0}
+  .md strong{font-weight:600}
+  .md code{
+    font-family:var(--font-mono);font-size:12px;
+    background:var(--surface-2);border:1px solid var(--border);border-radius:4px;padding:1px 5px;
+  }
+  .md pre{
+    background:var(--surface-2);border:1px solid var(--border);border-radius:var(--r-md);
+    padding:12px 14px;margin:10px 0;overflow-x:auto;
+  }
+  .md pre code{background:none;border:none;padding:0;font-size:12px;line-height:1.6}
+  .md blockquote{
+    margin:10px 0;padding:2px 0 2px 12px;
+    border-left:2px solid var(--border-strong);color:var(--muted);
+  }
+  .md hr{border:none;border-top:1px solid var(--border);margin:16px 0}
+  .md table{width:100%;border-collapse:collapse;margin:10px 0;font-size:12.5px}
+  .md th{background:var(--surface-2);font-weight:600;text-align:left}
+  .md th,.md td{border:1px solid var(--border);padding:6px 10px}
+
+  /* ============ 智能体与插件 ============ */
+  .host-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:14px;margin-bottom:20px}
+  .host-card{padding:16px 18px;display:flex;flex-direction:column;gap:10px}
+  .host-card .hc-top{display:flex;align-items:center;gap:10px}
+  .host-card .hc-icon{
+    width:34px;height:34px;border-radius:9px;display:grid;place-items:center;flex:none;
+    background:var(--fg);color:var(--surface);font-family:var(--font-mono);font-size:12px;font-weight:700;
+  }
+  .host-card .hc-icon.alt{background:var(--surface-2);color:var(--fg);border:1px solid var(--border-strong)}
+  .host-card .hc-name{font-size:14px;font-weight:600;font-family:var(--font-display)}
+  .host-card .hc-ver{font-family:var(--font-mono);font-size:11px;color:var(--faint)}
+  .host-card .hc-desc{font-size:12px;color:var(--muted);line-height:1.65}
+  .host-card .hc-foot{display:flex;align-items:center;gap:8px;margin-top:auto}
+  .profile-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:10px}
+  .profile-card{padding:12px 14px;display:flex;flex-direction:column;gap:4px}
+  .profile-card .pc-top{display:flex;align-items:center;gap:8px}
+  .profile-card .pc-name{font-size:12.5px;font-weight:550}
+  .profile-card .pc-meta{font-size:11px;color:var(--faint);line-height:1.55}
+  .section-h{
+    font-family:var(--font-display);font-size:14px;font-weight:600;margin:22px 0 10px;
+    display:flex;align-items:center;gap:10px;
+  }
+  .section-h .hint{font-size:11.5px;color:var(--faint);font-weight:400}
+
+  /* ============ 基础设施 ============ */
+  .infra-grid{display:grid;grid-template-columns:340px 1fr;gap:16px;align-items:start}
+  .kv{display:grid;grid-template-columns:110px 1fr;gap:8px 12px;font-size:12.5px}
+  .kv dt{color:var(--faint);font-size:11.5px;padding-top:1px}
+  .kv dd{word-break:break-all}
+  .kv dd.mono{font-size:11.5px}
+
+  /* ============ 动效:仅 transform/opacity,统一曲线 cubic-bezier(0.2,0,0,1) ============ */
+  @keyframes viewIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+  @keyframes pageIn{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+  @keyframes cardIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+  @keyframes tabIn{from{opacity:0;transform:scale(.94)}to{opacity:1;transform:none}}
+  @keyframes msgIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+  .view.active{animation:viewIn .22s cubic-bezier(0.2,0,0,1)}
+  .page-in,.browser-in{animation:pageIn .2s cubic-bezier(0.2,0,0,1)}
+  .skill-card{animation:cardIn .17s cubic-bezier(0.2,0,0,1) both}
+  .tb-tab.tb-in{animation:tabIn .15s cubic-bezier(0.2,0,0,1)}
+  .msg-in{animation:msgIn .18s cubic-bezier(0.2,0,0,1)}
+  .send-btn{transition:background .12s ease,transform .1s ease}
+  .send-btn:active{transform:scale(.94)}
+  @media (prefers-reduced-motion: reduce){
+    .view.active,.page-in,.browser-in,.skill-card,.tb-tab.tb-in,.msg-in{animation:none}
+    .btn,.send-btn,.ws-card,.skill-card,.side-resize::after,.composer{transition:none}
+    .btn:active,.send-btn:active{transform:none}
+  }
+
+  /* 窄窗口加固:网格子项可收缩,收列并收紧间距 */
+  .infra-grid>*,.show-cols>*,.show-grid>*,.host-cards>*{min-width:0}
+  @media (max-width:880px){
+    .show-cols{grid-template-columns:1fr}
+    .infra-grid{grid-template-columns:1fr}
+    .page-head{padding:14px 20px 0}
+    .page-body{padding:14px 20px 28px}
+    .sp-top{padding:10px 16px;flex-wrap:wrap;row-gap:8px}
+    .pi-input{padding:10px 16px}
+    .home-wrap{padding:28px 20px}
+    .show-wrap{padding:36px 20px 32px}
+    .titlebar .menus{display:none} /* 极窄时优先保住标签区 */
+  }
+
+  /* 滚动条 */
+  ::-webkit-scrollbar{width:10px;height:10px}
+  ::-webkit-scrollbar-thumb{background:var(--border-strong);border-radius:6px;border:2px solid var(--bg)}
+  ::-webkit-scrollbar-thumb:hover{background:var(--faint)}
+  ::-webkit-scrollbar-track{background:transparent}
+</style>
+</head>
+<body>
+<div class="window" data-od-id="window">
+
+  <!-- 标题栏 -->
+  <header class="titlebar" data-od-id="titlebar">
+    <button type="button" class="app-mark" id="app-mark" title="回到首页" aria-label="回到首页"><span class="dot-logo">A</span>Aster 工作台</button>
+    <nav class="menus">
+      <button type="button">文件</button>
+      <button type="button">视图</button>
+      <button type="button">帮助</button>
+    </nav>
+    <div class="drag">
+      <div class="tb-tabs" id="tb-tabs" data-od-id="titlebar-tabs" role="tablist" aria-label="工作区"></div>
+      <div class="tb-menu" id="tb-menu" hidden></div>
+    </div>
+    <div class="caption-btns">
+      <button type="button" aria-label="最小化"><svg viewBox="0 0 10 10"><path d="M1 5h8" stroke="currentColor" stroke-width="1"/></svg></button>
+      <button type="button" aria-label="最大化"><svg viewBox="0 0 10 10"><rect x="1.5" y="1.5" width="7" height="7" fill="none" stroke="currentColor" stroke-width="1"/></svg></button>
+      <button type="button" class="close" aria-label="关闭"><svg viewBox="0 0 10 10"><path d="M1.5 1.5l7 7M8.5 1.5l-7 7" stroke="currentColor" stroke-width="1"/></svg></button>
+    </div>
+  </header>
+
+  <div class="shell">
+    <!-- 侧边栏 -->
+    <aside class="sidebar" data-od-id="sidebar">
+      <div class="side-scroll">
+        <div class="nav-group" id="side-nav">
+          <button type="button" class="nav-item" id="nav-home" data-view="pi" data-od-id="nav-home">
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M8 2.5v11M2.5 8h11"/></svg>
+            新对话
+          </button>
+          <button type="button" class="nav-item" data-view="agents" data-od-id="nav-agents">
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><circle cx="8" cy="5" r="2.6"/><path d="M2.8 13.5c.6-2.6 2.7-4 5.2-4s4.6 1.4 5.2 4"/></svg>
+            智能体与宿主
+          </button>
+          <button type="button" class="nav-item" data-view="infra" data-od-id="nav-infra">
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M2.5 12.5h11M4 12.5v-7M8 12.5v-4M12 12.5V3.5"/></svg>
+            基础设施与证据
+          </button>
+        </div>
+
+        <div id="side-default">
+          <div class="side-section">项目 <button type="button" aria-label="添加项目">+</button></div>
+          <div class="nav-group">
+            <button type="button" class="proj-item current">
+              <svg class="folder-ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M2 4.5A1.5 1.5 0 013.5 3h2L7 4.5h5.5A1.5 1.5 0 0114 6v5.5a1.5 1.5 0 01-1.5 1.5h-9A1.5 1.5 0 012 11.5v-7z"/></svg>
+              <span>Aster<span class="sub">C:\Aster · master</span></span>
+            </button>
+            <button type="button" class="proj-item">
+              <svg class="folder-ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M2 4.5A1.5 1.5 0 013.5 3h2L7 4.5h5.5A1.5 1.5 0 0114 6v5.5a1.5 1.5 0 01-1.5 1.5h-9A1.5 1.5 0 012 11.5v-7z"/></svg>
+              BottleMusic
+            </button>
+            <button type="button" class="proj-item">
+              <svg class="folder-ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M2 4.5A1.5 1.5 0 013.5 3h2L7 4.5h5.5A1.5 1.5 0 0114 6v5.5a1.5 1.5 0 01-1.5 1.5h-9A1.5 1.5 0 012 11.5v-7z"/></svg>
+              skills-hub
+            </button>
+            <button type="button" class="proj-item">
+              <svg class="folder-ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M2 4.5A1.5 1.5 0 013.5 3h2L7 4.5h5.5A1.5 1.5 0 0114 6v5.5a1.5 1.5 0 01-1.5 1.5h-9A1.5 1.5 0 012 11.5v-7z"/></svg>
+              wrooper
+            </button>
+          </div>
+
+          <div class="side-section">最近会话</div>
+          <div class="nav-group">
+            <button type="button" class="proj-item">M4 更新与恢复中心规划</button>
+            <button type="button" class="proj-item">Skills 快照 Diff 排查</button>
+          </div>
+        </div>
+
+        <div id="side-tools" hidden>
+          <div class="side-section">工具</div>
+          <div class="nav-group" id="side-tool-list" data-od-id="side-tool-list"></div>
+        </div>
+      </div>
+      <div class="side-foot">
+        <span class="avatar">瓶</span>
+        <span class="name">小瓶子</span>
+        <button type="button" class="settings-btn" aria-label="设置">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><circle cx="8" cy="8" r="2.2"/><path d="M8 1.8v1.8M8 12.4v1.8M1.8 8h1.8M12.4 8h1.8M3.7 3.7l1.3 1.3M11 11l1.3 1.3M12.3 3.7L11 5M5 11l-1.3 1.3"/></svg>
+        </button>
+      </div>
+    </aside>
+
+    <!-- 侧边栏拖拽调宽手柄 -->
+    <div class="side-resize" id="side-resize" data-od-id="side-resize" title="拖拽调整侧边栏宽度" hidden></div>
+
+    <!-- 主区 -->
+    <main class="main" data-od-id="main">
+
+      <!-- ===== 视图:Aster 首页(展示界面) ===== -->
+      <section class="view" id="view-home" data-od-id="view-home">
+        <div class="show-wrap">
+          <div class="show-inner">
+            <div class="show-hero">
+              <h1 class="show-title">Aster 工作台</h1>
+              <p class="show-sub">本机的多宿主智能体工作台。在一个窗口里管理 Pi 会话、DeepSeek Harness 原生界面,以及各个 AI 工具里安装的 skills。</p>
+              <div class="show-status">
+                <span class="ss"><span class="status-dot run"></span>Pi · RPC 已就绪</span>
+                <span class="ss"><span class="status-dot run"></span>DeepSeek Harness · <span class="mono">127.0.0.1:38472</span></span>
+                <span class="ss"><span class="status-dot idle"></span>Skills-Hub · 6 个 skills / 11 个工具</span>
+              </div>
+            </div>
+
+            <div class="show-grid">
+              <button type="button" class="ws-card" data-goto="pi" data-od-id="ws-card-pi">
+                <span class="ws-icon">π</span>
+                <span class="ws-name">Pi 工作台</span>
+                <span class="ws-desc">与 Pi 的本地会话:RPC 子进程驱动,流式返回,会话写入独立工作目录。</span>
+                <span class="ws-go">打开<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M3 8h10M9 4l4 4-4 4"/></svg></span>
+              </button>
+              <button type="button" class="ws-card" data-goto="dsh" data-od-id="ws-card-dsh">
+                <span class="ws-icon">DS</span>
+                <span class="ws-name">DeepSeek Harness</span>
+                <span class="ws-desc">本地服务的原生 Web UI,直接进入即启动;插件由 cordis 上下文驱动。</span>
+                <span class="ws-go">打开<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M3 8h10M9 4l4 4-4 4"/></svg></span>
+              </button>
+              <button type="button" class="ws-card" data-goto="skills" data-od-id="ws-card-skills">
+                <span class="ws-icon">Sk</span>
+                <span class="ws-name">Skills-Hub</span>
+                <span class="ws-desc">查看各个 AI 工具里安装的 skill,按工具名浏览与核对。</span>
+                <span class="ws-go">打开<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M3 8h10M9 4l4 4-4 4"/></svg></span>
+              </button>
+            </div>
+
+            <div class="show-cols">
+              <div data-od-id="home-permissions">
+                <h2>权限</h2>
+                <div class="proj-item perm-item">
+                  <svg class="folder-ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M8 1.8l4.8 1.9v4.1c0 2.9-1.9 4.9-4.8 6-2.9-1.1-4.8-3.1-4.8-6V3.7L8 1.8z"/></svg>
+                  <span>Pi<span class="sub">本地 RPC 会话,写入独立工作目录</span></span>
+                </div>
+                <div class="proj-item perm-item">
+                  <svg class="folder-ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M8 1.8l4.8 1.9v4.1c0 2.9-1.9 4.9-4.8 6-2.9-1.1-4.8-3.1-4.8-6V3.7L8 1.8z"/></svg>
+                  <span>DeepSeek Harness<span class="sub">仅监听 127.0.0.1,不暴露到局域网</span></span>
+                </div>
+                <div class="proj-item perm-item">
+                  <svg class="folder-ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M8 1.8l4.8 1.9v4.1c0 2.9-1.9 4.9-4.8 6-2.9-1.1-4.8-3.1-4.8-6V3.7L8 1.8z"/></svg>
+                  <span>Skills-Hub<span class="sub">扫描只读,部署确认 Plan 后才写入</span></span>
+                </div>
+              </div>
+              <div data-od-id="home-recents">
+                <h2>最近会话</h2>
+                <button type="button" class="recent-row" data-goto="pi" data-pi-open>
+                  <span>M4 更新与恢复中心规划</span>
+                  <span class="time">5 分钟前</span>
+                </button>
+                <button type="button" class="recent-row" data-goto="pi" data-pi-open>
+                  <span>Skills 快照 Diff 排查</span>
+                  <span class="time">33 分钟前</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ===== 视图:Pi(新对话 / 会话) ===== -->
+      <section class="view" id="view-pi" data-od-id="view-pi">
+        <!-- 状态一:新对话 -->
+        <div class="home-wrap" id="pi-compose" data-od-id="pi-compose">
+          <div class="home-inner">
+            <h1 class="home-title">想在 Aster 里构建什么?</h1>
+            <p class="home-sub">描述任务。Pi 走本地 RPC 会话,写入独立工作目录。</p>
+
+            <div class="composer" data-od-id="composer">
+              <div class="ctx-bar">
+                <span class="ctx-chip">
+                  <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M2 4.5A1.5 1.5 0 013.5 3h2L7 4.5h5.5A1.5 1.5 0 0114 6v5.5a1.5 1.5 0 01-1.5 1.5h-9A1.5 1.5 0 012 11.5v-7z"/></svg>
+                  <b>Aster</b>
+                </span>
+                <span class="ctx-chip">
+                  <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><rect x="2.5" y="3" width="11" height="8" rx="1.5"/><path d="M5.5 13.5h5"/></svg>
+                  本地
+                </span>
+                <span class="ctx-chip">
+                  <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><circle cx="4.5" cy="4" r="1.8"/><circle cx="11.5" cy="12" r="1.8"/><path d="M4.5 5.8v3.4c0 1.5 1.2 2.6 2.7 2.8"/></svg>
+                  <b>master</b>
+                </span>
+              </div>
+              <textarea placeholder="描述任务,例如:为 M4 更新中心编写并排版本切换的 TDD 计划…" aria-label="任务输入"></textarea>
+              <div class="composer-foot">
+                <button type="button" class="icon-btn" aria-label="附件">
+                  <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M8 3v10M3 8h10"/></svg>
+                </button>
+                <span class="tag neutral">会话将写入独立工作目录</span>
+                <button type="button" class="send-btn" aria-label="发送" data-pi-open data-od-id="pi-send">
+                  <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M8 13V3M3.5 7.5L8 3l4.5 4.5"/></svg>
+                </button>
+              </div>
+            </div>
+
+            <div class="suggest-row">
+              <button type="button" class="chip">代码审查</button>
+              <button type="button" class="chip">TDD 计划</button>
+              <button type="button" class="chip">Skills 快照排查</button>
+              <button type="button" class="chip">架构决策记录</button>
+            </div>
+
+            <div class="home-recents">
+              <h2>继续上次的工作</h2>
+              <button type="button" class="recent-row" data-pi-open>
+                <span>M1 Code Review and Development</span>
+                <span class="time">5 分钟前</span>
+              </button>
+              <button type="button" class="recent-row" data-pi-open>
+                <span>Implementing M3 Skills Manager</span>
+                <span class="time">33 分钟前</span>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- 状态二:会话中 -->
+        <div class="pi-chat" id="pi-chat" hidden data-od-id="pi-chat">
+          <div class="pi-transcript" data-od-id="pi-transcript" aria-live="polite">
+            <div class="msg user">
+              <div class="role">你 · 23:05</div>
+              <div class="bubble">扫描 skills-hub 仓库,对 pi host 的 user 作用域生成批量部署计划,先不要 Apply。</div>
+            </div>
+            <div class="msg">
+              <div class="role">PI · 23:05</div>
+              <div class="bubble">
+                已扫描仓库,发现 6 个 Skill。正在生成部署计划(Plan 阶段,不写入目标目录)。
+                <div class="tool-call">
+                  <span class="status-dot run"></span>
+                  skills_scan_repo · repo=skills-hub,6 skills discovered
+                </div>
+                <div class="tool-call">
+                  <span class="status-dot idle"></span>
+                  skill_batch_deploy_plan · snapshot=a1b2c3d4e5f6-deploy-skill,3 targets
+                </div>
+              </div>
+            </div>
+            <div class="msg">
+              <div class="role">PI · 23:06</div>
+              <div class="bubble">
+                计划已就绪:3 个目标中 2 个 ready,1 个 <b>blocked_unmanaged_conflict</b>(目标路径存在非 Aster 部署的文件,已跳过)。请确认后再 Apply;应用失败会自动补偿回滚。
+              </div>
+            </div>
+          </div>
+          <div class="pi-input" data-od-id="pi-input">
+            <div class="pi-input-inner">
+              <textarea id="pi-chat-text" placeholder="发送 prompt 到 Pi 会话…(Enter 发送,Shift+Enter 换行)" aria-label="Pi prompt 输入"></textarea>
+              <button type="button" class="btn primary" id="pi-chat-send" data-od-id="pi-chat-send">发送</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ===== 视图:DeepSeek Harness(纯壳子,整幅原生界面) ===== -->
+      <section class="view" id="view-dsh" data-od-id="view-dsh">
+        <div class="dsh-embed" data-od-id="dsh-embed">
+          <iframe src="http://127.0.0.1:38472" title="DeepSeek Harness 原生 Web UI" data-od-id="dsh-frame"></iframe>
+          <div class="embed-fallback" id="dsh-fallback">
+            <div class="ef-title">DeepSeek Harness 未运行</div>
+            <p class="ef-sub">切换到此界面会自动启动本地服务,并在这里内嵌它的原生界面。</p>
+            <button type="button" class="btn primary sm" data-od-id="dsh-start-btn">启动服务</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- ===== 视图:Skills-Hub(点工具看 skills;点 skill 进详情页) ===== -->
+      <section class="view" id="view-skills" data-od-id="view-skills">
+        <!-- 浏览态:skill 卡片网格 -->
+        <div class="view-scroll" id="skills-browser" data-od-id="skills-browser">
+          <div class="page-head">
+            <div>
+              <h1>Skills-Hub</h1>
+              <p class="desc">各个 AI 工具里安装的 skill,点左侧工具名筛选,点卡片查看详情</p>
+            </div>
+          </div>
+          <div class="page-body">
+            <div class="skills-grid" id="skills-grid" data-od-id="skills-grid"></div>
+          </div>
+        </div>
+        <!-- 详情态:作用 + 流程 + 原文/译文(markdown 渲染) -->
+        <div class="skill-page" id="skill-page" data-od-id="skill-page" hidden>
+          <div class="sp-top">
+            <button type="button" class="sp-back" id="sp-back" data-od-id="sp-back">
+              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M10 3L5 8l5 5"/></svg>
+              返回
+            </button>
+            <div class="sp-title">
+              <div class="sp-name" id="sp-name"></div>
+              <div class="sp-meta" id="sp-meta"></div>
+            </div>
+            <div class="seg" id="sp-seg" data-od-id="sp-seg">
+              <button type="button" data-lang="zh" class="on">中文说明</button>
+              <button type="button" data-lang="en">原文</button>
+            </div>
+          </div>
+          <div class="view-scroll">
+            <div class="page-body sp-body">
+              <section class="card sp-block" data-od-id="sp-purpose">
+                <div class="sp-block-h">作用</div>
+                <p class="sp-purpose-text" id="sp-purpose-text"></p>
+                <div class="sp-chips" id="sp-chips"></div>
+              </section>
+              <section class="card sp-block" data-od-id="sp-flow">
+                <div class="sp-block-h">流程</div>
+                <div class="flow" id="sp-flow"></div>
+              </section>
+              <section class="card sp-block" data-od-id="sp-doc">
+                <div class="sp-block-h"><span id="sp-doc-title">中文说明</span><span class="hint" id="sp-doc-hint"></span></div>
+                <div class="md" id="sp-md"></div>
+              </section>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ===== 视图:智能体与宿主 ===== -->
+      <section class="view" id="view-agents" data-od-id="view-agents">
+        <div class="view-scroll">
+          <div class="page-head">
+            <div>
+              <h1>智能体与宿主</h1>
+              <p class="desc">两个活跃 connector 驱动会话;其余工具以只读 HostProfile 接入 Skills-Hub</p>
+            </div>
+          </div>
+          <div class="page-body">
+            <div class="section-h" style="margin-top:0">活跃 Connector <span class="hint">可发起会话的宿主</span></div>
+            <div class="host-cards">
+              <div class="card host-card" data-od-id="host-card-pi">
+                <div class="hc-top">
+                  <span class="hc-icon">π</span>
+                  <div>
+                    <div class="hc-name">Pi</div>
+                    <div class="hc-ver">锁定 0.84.2 · managed,严格 JSONL RPC</div>
+                  </div>
+                  <span class="tag ok" style="margin-left:auto">verified_and_ready</span>
+                </div>
+                <p class="hc-desc">以子进程运行,流式状态机解析事件;会话在 Aster 内的 Pi 工作台进行,事件经 pi-event 推送。进程退出由 supervisor 分类:CleanExit / FailureExit / TerminatedByAster。</p>
+                <div class="hc-foot">
+                  <button type="button" class="btn sm" data-goto="pi">打开 Pi 工作台</button>
+                  <span class="faint" style="font-size:11px">pi-workspace 独立工作目录</span>
+                </div>
+              </div>
+              <div class="card host-card" data-od-id="host-card-dsh">
+                <div class="hc-top">
+                  <span class="hc-icon alt">DS</span>
+                  <div>
+                    <div class="hc-name">DeepSeek Harness</div>
+                    <div class="hc-ver">锁定 0.1.0-rc.6 · managed,原生 Web UI</div>
+                  </div>
+                  <span class="tag ok" style="margin-left:auto">verified_and_ready</span>
+                </div>
+                <p class="hc-desc">以 localhost 服务运行,原生界面内嵌于 DSH 页面(WebView2,仅限 127.0.0.1 来源)。DSH 的插件与自定义模式由其原生 UI 提供;Aster 不另做插件系统,避免两套真相。</p>
+                <div class="hc-foot">
+                  <button type="button" class="btn sm" data-goto="dsh">打开 DSH 控制台</button>
+                  <span class="faint" style="font-size:11px">dsh-workspace 独立工作目录</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="section-h">只读宿主档案 <span class="hint">host_profiles_list · 用于 Skill 部署目标与扫描</span></div>
+            <div class="profile-grid" data-od-id="profile-grid">
+              <div class="card profile-card">
+                <div class="pc-top"><span class="status-dot run"></span><span class="pc-name">Antigravity</span><span class="tag ok" style="margin-left:auto">verified</span></div>
+                <div class="pc-meta">bundle 发现 · 2 个作用域,已检测 4 个 skills</div>
+              </div>
+              <div class="card profile-card">
+                <div class="pc-top"><span class="status-dot warn"></span><span class="pc-name">Cursor</span><span class="tag warn" style="margin-left:auto">experimental</span></div>
+                <div class="pc-meta">flat 发现 · 未检测到安装</div>
+              </div>
+              <div class="card profile-card">
+                <div class="pc-top"><span class="status-dot warn"></span><span class="pc-name">Claude Code</span><span class="tag warn" style="margin-left:auto">experimental</span></div>
+                <div class="pc-meta">recursive 发现 · user 作用域已解析</div>
+              </div>
+              <div class="card profile-card">
+                <div class="pc-top"><span class="status-dot warn"></span><span class="pc-name">Codex</span><span class="tag warn" style="margin-left:auto">experimental</span></div>
+                <div class="pc-meta">flat 发现 · 未检测到安装</div>
+              </div>
+              <div class="card profile-card">
+                <div class="pc-top"><span class="status-dot idle"></span><span class="pc-name">Zed</span><span class="tag neutral" style="margin-left:auto">scan-only</span></div>
+                <div class="pc-meta">仅事实表,不参与部署</div>
+              </div>
+              <div class="card profile-card">
+                <div class="pc-top"><span class="status-dot idle"></span><span class="pc-name">Kimi Code</span><span class="tag neutral" style="margin-left:auto">scan-only</span></div>
+                <div class="pc-meta">仅事实表,不参与部署</div>
+              </div>
+              <div class="card profile-card">
+                <div class="pc-top"><span class="status-dot idle"></span><span class="pc-name">Grok Build</span><span class="tag neutral" style="margin-left:auto">scan-only</span></div>
+                <div class="pc-meta">仅事实表,不参与部署</div>
+              </div>
+              <div class="card profile-card">
+                <div class="pc-top"><span class="status-dot idle"></span><span class="pc-name">Qoder</span><span class="tag neutral" style="margin-left:auto">scan-only</span></div>
+                <div class="pc-meta">仅事实表,不参与部署</div>
+              </div>
+              <div class="card profile-card">
+                <div class="pc-top"><span class="status-dot idle"></span><span class="pc-name">ZCode</span><span class="tag neutral" style="margin-left:auto">scan-only</span></div>
+                <div class="pc-meta">仅事实表,不参与部署</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ===== 视图:基础设施与证据 ===== -->
+      <section class="view" id="view-infra" data-od-id="view-infra">
+        <div class="view-scroll">
+          <div class="page-head">
+            <div>
+              <h1>基础设施与证据</h1>
+              <p class="desc">应用状态、部署记录与分级 Evidence,如实呈现,不做布尔化的"已兼容"</p>
+            </div>
+          </div>
+          <div class="page-body">
+            <div class="infra-grid">
+              <div class="card card-pad" data-od-id="infra-status">
+                <div class="section-h" style="margin-top:0">应用状态 <span class="hint">get_app_status</span></div>
+                <dl class="kv">
+                  <dt>app_version</dt><dd class="mono">0.3.0(M3 基线)</dd>
+                  <dt>数据目录</dt><dd class="mono">%LOCALAPPDATA%\Aster</dd>
+                  <dt>schema 版本</dt><dd class="mono">3(迁移 0001-0003)</dd>
+                  <dt>证据总数</dt><dd class="mono">128</dd>
+                  <dt>支持平台</dt><dd>Windows 10 22H2 / 11 x64</dd>
+                </dl>
+              </div>
+              <div class="card" data-od-id="infra-deployments">
+                <div class="section-h" style="margin:14px 18px 4px">部署记录 <span class="hint">skill_deployment</span></div>
+                <table class="table">
+                  <thead><tr><th>Skill</th><th>目标</th><th>作用域</th><th>状态</th><th>时间</th></tr></thead>
+                  <tbody>
+                    <tr><td class="mono">deploy-skill</td><td>Pi</td><td>user</td><td><span class="tag ok">deployed</span></td><td class="faint">08-15 22:41</td></tr>
+                    <tr><td class="mono">snapshot-diff</td><td>DSH</td><td>project</td><td><span class="tag ok">deployed</span></td><td class="faint">08-15 22:40</td></tr>
+                    <tr><td class="mono">session-recovery</td><td>Cursor</td><td>user</td><td><span class="tag err">rolled_back</span></td><td class="faint">08-14 21:02</td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div class="card" style="margin-top:16px" data-od-id="infra-evidence">
+              <div class="section-h" style="margin:14px 18px 4px">分级 Evidence <span class="hint">七阶段:discovered → … → callable_verified</span></div>
+              <table class="table">
+                <thead><tr><th>快照 × 宿主</th><th>阶段</th><th>状态</th><th>observer</th><th>observed_at</th></tr></thead>
+                <tbody>
+                  <tr><td class="mono">a1b2…e5f6 × pi@0.84.2</td><td>callable_verified</td><td><span class="tag ok">success</span></td><td class="mono">selftest-m3</td><td class="faint">08-15 22:41</td></tr>
+                  <tr><td class="mono">a1b2…e5f6 × dsh@0.1.0-rc.6</td><td>session_loaded</td><td><span class="tag ok">success</span></td><td class="mono">dsh_connector</td><td class="faint">08-15 22:40</td></tr>
+                  <tr><td class="mono">9f8e…5b4a × cursor@?</td><td>target_discovered</td><td><span class="tag warn">unknown</span></td><td class="mono">host_profile</td><td class="faint">08-14 21:03</td></tr>
+                  <tr><td class="mono">9f8e…5b4a × pi@0.84.1</td><td>configured</td><td><span class="tag neutral">stale</span></td><td class="mono">pi_connector</td><td class="faint">08-12 19:20</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </section>
+
+    </main>
+  </div>
+</div>
+
+<script>
+(function(){
+  "use strict";
+
+  /* ---- 三个界面(标题栏浏览器式标签,可关闭/重新打开) ---- */
+  var SERVICES=[
+    {id:"pi",label:"Pi",icon:'<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M5.5 4L2 8l3.5 4M10.5 4L14 8l-3.5 4"/></svg>'},
+    {id:"dsh",label:"DeepSeek Harness",icon:'<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="2" y="2.5" width="12" height="11" rx="2"/><path d="M2 6h12"/></svg>'},
+    {id:"skills",label:"Skills-Hub",icon:'<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M8 1.8l5.2 3v6.4L8 14.2 2.8 11.2V4.8L8 1.8z"/><path d="M8 5.2v5.6M5.4 6.6l5.2 3"/></svg>'}
+  ];
+  var tbTabsEl=document.getElementById("tb-tabs");
+  var tbMenu=document.getElementById("tb-menu");
+  var openTabs=["pi","dsh","skills"];
+  try{
+    var rawTabs=window.localStorage.getItem("aster.openTabs");
+    if(rawTabs){
+      var parsed=JSON.parse(rawTabs);
+      if(Array.isArray(parsed))openTabs=parsed.filter(function(id){return SERVICES.some(function(s){return s.id===id;});});
+    }
+  }catch(e){}
+  function persistTabs(){try{window.localStorage.setItem("aster.openTabs",JSON.stringify(openTabs));}catch(e){}}
+
+  /* ---- 视图切换(localStorage 持久化) ---- */
+  var navItems=Array.prototype.slice.call(document.querySelectorAll(".nav-item[data-view]"));
+  var views=Array.prototype.slice.call(document.querySelectorAll(".view"));
+  var sidebar=document.querySelector(".sidebar");
+  var sideNav=document.getElementById("side-nav");
+  var sideDefault=document.getElementById("side-default");
+  var sideTools=document.getElementById("side-tools");
+  var activeView="home";
+
+  function renderTabs(){
+    tbTabsEl.innerHTML="";
+    openTabs.forEach(function(id){
+      var svc=SERVICES.filter(function(s){return s.id===id;})[0];
+      var btn=document.createElement("button");
+      btn.type="button";
+      btn.className="tb-tab"+(activeView===id?" active":"");
+      btn.setAttribute("role","tab");
+      btn.setAttribute("aria-selected",activeView===id?"true":"false");
+      btn.setAttribute("data-od-id","tb-tab-"+id);
+      btn.innerHTML=svc.icon+'<span>'+svc.label+'</span>'+
+        '<span class="tb-x" role="button" tabindex="0" aria-label="关闭 '+svc.label+'" title="关闭">'+
+        '<svg viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.2"><path d="M1.5 1.5l7 7M8.5 1.5l-7 7"/></svg></span>';
+      btn.addEventListener("click",function(){setView(id);});
+      var x=btn.querySelector(".tb-x");
+      x.addEventListener("click",function(e){e.stopPropagation();closeTab(id);});
+      x.addEventListener("keydown",function(e){
+        if(e.key==="Enter"||e.key===" "){e.preventDefault();e.stopPropagation();closeTab(id);}
+      });
+      tbTabsEl.appendChild(btn);
+    });
+    var add=document.createElement("button");
+    add.type="button";
+    add.className="tb-add";
+    add.setAttribute("data-od-id","tb-add");
+    add.setAttribute("aria-label","打开服务");
+    add.title="打开服务";
+    add.innerHTML='<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M8 3v10M3 8h10"/></svg>';
+    add.addEventListener("click",function(e){e.stopPropagation();toggleMenu();});
+    tbTabsEl.appendChild(add);
+  }
+
+  function toggleMenu(force){
+    var show=typeof force==="boolean"?force:tbMenu.hidden;
+    if(!show){tbMenu.hidden=true;return;}
+    tbMenu.innerHTML="";
+    SERVICES.forEach(function(svc){
+      var isOpen=openTabs.indexOf(svc.id)>=0;
+      var b=document.createElement("button");
+      b.type="button";
+      b.innerHTML=svc.icon+'<span>'+svc.label+'</span>'+(isOpen?'<span class="tb-menu-state">已打开</span>':"");
+      b.addEventListener("click",function(e){
+        e.stopPropagation();
+        toggleMenu(false);
+        setView(svc.id); /* 未打开的标签由 setView 统一重开并播放入场 */
+      });
+      tbMenu.appendChild(b);
+    });
+    tbMenu.hidden=false;
+  }
+  document.addEventListener("click",function(){if(!tbMenu.hidden)tbMenu.hidden=true;});
+  document.addEventListener("keydown",function(e){if(e.key==="Escape")tbMenu.hidden=true;});
+
+  function setView(id){
+    /* 从首页卡片/最近会话进入某个服务时,若其标签已被 × 关闭则自动重新打开 */
+    var reopened=false;
+    if(SERVICES.some(function(s){return s.id===id;})&&openTabs.indexOf(id)<0){
+      openTabs.push(id);persistTabs();reopened=true;
+    }
+    activeView=id;
+    views.forEach(function(v){v.classList.toggle("active",v.id==="view-"+id);});
+    navItems.forEach(function(n){n.classList.toggle("active",n.getAttribute("data-view")===id);});
+    renderTabs();
+    if(reopened){ /* 重新打开的标签:轻微弹入提示它回来了 */
+      var tbs=tbTabsEl.querySelectorAll(".tb-tab");
+      var nt=tbs[tbs.length-1];
+      if(nt){nt.classList.add("tb-in");nt.addEventListener("animationend",function(){nt.classList.remove("tb-in");},{once:true});}
+    }
+    /* 侧边栏三种模式:展示首页与 DSH 无侧边栏;Skills-Hub 窄工具列;其余完整导航 */
+    var isSkills=id==="skills";
+    var noSidebar=id==="dsh"||id==="home";
+    if(sidebar){
+      sidebar.hidden=noSidebar;
+      sidebar.classList.toggle("slim",isSkills);
+      applySideWidth();
+    }
+    if(sideResize)sideResize.hidden=noSidebar;
+    if(sideNav)sideNav.hidden=isSkills||noSidebar;
+    if(sideDefault)sideDefault.hidden=isSkills||noSidebar;
+    if(sideTools)sideTools.hidden=!isSkills;
+    if(id==="dsh")setDshRunning(true); /* 进入 DSH 即启动服务 */
+    try{window.localStorage.setItem("aster.activeView",id);}catch(e){}
+  }
+
+  function closeTab(id){
+    openTabs=openTabs.filter(function(x){return x!==id;});
+    if(id==="dsh")setDshRunning(false); /* 关闭 DSH 标签 = 停止服务 */
+    persistTabs();
+    if(activeView===id){
+      setView(openTabs.length?openTabs[openTabs.length-1]:"home");
+    }else{
+      renderTabs();
+    }
+  }
+
+  navItems.forEach(function(n){
+    n.addEventListener("click",function(){setView(n.getAttribute("data-view"));});
+  });
+  document.querySelectorAll("[data-goto]").forEach(function(b){
+    b.addEventListener("click",function(){setView(b.getAttribute("data-goto"));});
+  });
+  var appMark=document.getElementById("app-mark");
+  if(appMark)appMark.addEventListener("click",function(){setView("home");});
+
+  /* ---- DSH:服务运行状态(空态覆盖层) ---- */
+  var dshFallback=document.getElementById("dsh-fallback");
+  function setDshRunning(on){if(dshFallback)dshFallback.hidden=on;}
+  var dshStart=document.querySelector("[data-od-id='dsh-start-btn']");
+  if(dshStart)dshStart.addEventListener("click",function(){setDshRunning(true);});
+
+  /* ---- Skills-Hub:点工具筛选;点 skill 进详情页(作用/流程/原文·译文) ---- */
+  var TOOLS=["Pi","DSH","Antigravity","Cursor","Claude Code","Codex","Zed","Kimi Code","Grok Build","Qoder","ZCode"];
+  var SKILLS=[
+    {id:"deploy-skill",desc:"把一个 skill 一次安装到多个 AI 工具,不用逐台手动复制。",tools:["Pi","DSH","Antigravity"],updated:"2026-08-15",
+     flow:["选择 skill 与目标工具","生成逐目标计划","用户确认计划","逐目标复制文件","记录部署证据"],
+     original:[
+      "# deploy-skill",
+      "",
+      "Deploy one skill to multiple agent hosts in a single batch.",
+      "",
+      "## When to use",
+      "",
+      "- Roll out a new or updated skill to several tools at once",
+      "- Re-deploy after editing the source snapshot",
+      "",
+      "## How it works",
+      "",
+      "1. Builds a per-target plan (tool, scope, exact path)",
+      "2. Shows file changes and the restore strategy",
+      "3. Copies exact files: never symlinks or junctions",
+      "4. Records each target result independently",
+      "",
+      "## Guarantees",
+      "",
+      "- Unmanaged directories are never overwritten",
+      "- Partial success stays visible; failed targets roll back one by one"
+     ].join("\n"),
+     zh:[
+      "# deploy-skill · 中文说明",
+      "",
+      "**用途**:把一个 skill 一次性安装到多个 AI 工具,不用逐台手动复制。",
+      "",
+      "## 适用任务",
+      "",
+      "- skill 更新后,同步到所有已接入的工具",
+      "- 新工具接入后,补齐已有的 skills",
+      "",
+      "## 目标工具",
+      "",
+      "Pi、DSH、Antigravity",
+      "",
+      "## 前置条件",
+      "",
+      "- 目标工具已有只读 HostProfile",
+      "- 源快照已通过静态检查",
+      "",
+      "## 风险",
+      "",
+      "逐目标执行,不保证跨目录原子性;部分成功会单独标出,失败目标可单独回滚。",
+      "",
+      "---",
+      "来源快照 `a1b2c3` · 作者 workbench,更新于 2026-08-15"
+     ].join("\n")},
+    {id:"session-recovery",desc:"会话异常退出后,找回历史会话并恢复上下文。",tools:["Pi"],updated:"2026-08-12",
+     flow:["检测到异常退出","列出可恢复会话","选择会话","恢复上下文继续"],
+     original:[
+      "# session-recovery",
+      "",
+      "Recover Pi sessions after an unexpected exit.",
+      "",
+      "## When to use",
+      "",
+      "- The Pi process crashed or was killed mid-session",
+      "- You want to resume with the previous context intact",
+      "",
+      "## How it works",
+      "",
+      "1. Detects the exit class (CleanExit / FailureExit / TerminatedByAster)",
+      "2. Lists resumable sessions from the event log",
+      "3. Restores context and continues the conversation",
+      "",
+      "## Notes",
+      "",
+      "Sessions terminated by Aster are never auto-resumed."
+     ].join("\n"),
+     zh:[
+      "# session-recovery · 中文说明",
+      "",
+      "**用途**:会话异常退出后,找回历史会话并恢复上下文。",
+      "",
+      "## 适用任务",
+      "",
+      "- Pi 进程崩溃或被结束后的会话恢复",
+      "- 想接着上次的上下文继续对话",
+      "",
+      "## 目标工具",
+      "",
+      "Pi",
+      "",
+      "## 前置条件",
+      "",
+      "- 会话事件日志完整保留在 pi-workspace",
+      "",
+      "## 风险",
+      "",
+      "由 Aster 主动终止的会话不会自动恢复,需手动选择。",
+      "",
+      "---",
+      "来源快照 `e4f5a6` · 作者 workbench,更新于 2026-08-12"
+     ].join("\n")},
+    {id:"diagnostics-pack",desc:"导出诊断信息,自动抹掉密钥、用户名和本机路径。",tools:["Pi","DSH"],updated:"2026-08-10",
+     flow:["选择导出范围","自动脱敏","打包诊断信息","保存到本地"],
+     original:[
+      "# diagnostics-pack",
+      "",
+      "Export a sanitized diagnostics bundle for Pi and DSH.",
+      "",
+      "## When to use",
+      "",
+      "- Reporting a bug and need to attach logs",
+      "- Comparing environment state across machines",
+      "",
+      "## How it works",
+      "",
+      "1. Pick the export scope (logs, config, evidence)",
+      "2. Secrets, user names and local paths are stripped automatically",
+      "3. Everything is packed into a single local archive",
+      "",
+      "## Privacy",
+      "",
+      "Nothing leaves the machine unless you share the file yourself."
+     ].join("\n"),
+     zh:[
+      "# diagnostics-pack · 中文说明",
+      "",
+      "**用途**:导出诊断信息,自动抹掉密钥、用户名和本机路径。",
+      "",
+      "## 适用任务",
+      "",
+      "- 反馈问题时需要附带日志",
+      "- 对比多台机器的环境状态",
+      "",
+      "## 目标工具",
+      "",
+      "Pi、DSH",
+      "",
+      "## 前置条件",
+      "",
+      "无,任何时候都可以导出。",
+      "",
+      "## 风险",
+      "",
+      "打包文件只存在本机;是否外发由你自己决定。",
+      "",
+      "---",
+      "来源快照 `b7c8d9` · 作者 workbench,更新于 2026-08-10"
+     ].join("\n")},
+    {id:"pi-rpc-debugger",desc:"逐条查看 Pi 与界面之间收发的消息,方便排查问题。",tools:["Pi"],updated:"2026-08-08",
+     flow:["连接到 Pi 会话","捕获收发消息","逐条检查与过滤","定位问题"],
+     original:[
+      "# pi-rpc-debugger",
+      "",
+      "Inspect every JSONL message between Aster and the Pi process.",
+      "",
+      "## When to use",
+      "",
+      "- A Pi session behaves unexpectedly",
+      "- You need to see the exact request that failed",
+      "",
+      "## How it works",
+      "",
+      "1. Attaches to a running Pi session",
+      "2. Captures messages in both directions",
+      "3. Filter by method, direction or session id",
+      "",
+      "## Notes",
+      "",
+      "Read-only; it never writes to the Pi stdio channel."
+     ].join("\n"),
+     zh:[
+      "# pi-rpc-debugger · 中文说明",
+      "",
+      "**用途**:逐条查看 Pi 与界面之间收发的消息,方便排查问题。",
+      "",
+      "## 适用任务",
+      "",
+      "- Pi 会话行为异常,想看原始收发内容",
+      "- 定位具体是哪一条请求失败",
+      "",
+      "## 目标工具",
+      "",
+      "Pi",
+      "",
+      "## 前置条件",
+      "",
+      "- 有一个正在运行的 Pi 会话",
+      "",
+      "## 风险",
+      "",
+      "只读工具,不会向 Pi 的输入通道写入任何内容。",
+      "",
+      "---",
+      "来源快照 `c1d2e3` · 作者 workbench,更新于 2026-08-08"
+     ].join("\n")},
+    {id:"snapshot-diff",desc:"对比一个 skill 的两个版本,列出哪些文件有改动。",tools:["DSH"],updated:"2026-08-05",
+     flow:["选择两个快照","对比文件清单","查看逐文件差异","导出结果"],
+     original:[
+      "# snapshot-diff",
+      "",
+      "Compare two snapshots of a skill and list what changed.",
+      "",
+      "## When to use",
+      "",
+      "- A new version arrived and you want to review it first",
+      "- Auditing what an update would actually change",
+      "",
+      "## How it works",
+      "",
+      "1. Pick the old and the new snapshot",
+      "2. Compares the file manifests (added / removed / modified)",
+      "3. Opens a per-file diff for anything that changed",
+      "",
+      "## Guarantees",
+      "",
+      "Snapshots are read-only; diffing never modifies either side."
+     ].join("\n"),
+     zh:[
+      "# snapshot-diff · 中文说明",
+      "",
+      "**用途**:对比一个 skill 的两个版本,列出哪些文件有改动。",
+      "",
+      "## 适用任务",
+      "",
+      "- 新版本到了,先审一遍再决定要不要升级",
+      "- 排查某次升级到底改了什么",
+      "",
+      "## 目标工具",
+      "",
+      "DSH",
+      "",
+      "## 前置条件",
+      "",
+      "- 同一个 skill 至少有两个快照",
+      "",
+      "## 风险",
+      "",
+      "快照只读,对比不会改动任何一边的内容。",
+      "",
+      "---",
+      "来源快照 `f4a5b6` · 作者 workbench,更新于 2026-08-05"
+     ].join("\n")},
+    {id:"host-onboarding",desc:"接入一个新工具时要逐项核对的检查清单。",tools:["DSH","Cursor"],updated:"2026-08-02",
+     flow:["录入工具信息","解析安装路径","逐项核对清单","生成只读档案"],
+     original:[
+      "# host-onboarding",
+      "",
+      "A checklist for connecting a new agent tool to Aster.",
+      "",
+      "## When to use",
+      "",
+      "- You installed a new AI tool and want Aster to see it",
+      "- Re-verifying a tool after an update",
+      "",
+      "## How it works",
+      "",
+      "1. Record where the tool is installed",
+      "2. Resolve its skill directories (user and project scope)",
+      "3. Walk the checklist item by item",
+      "4. Produces a read-only HostProfile",
+      "",
+      "## Notes",
+      "",
+      "Aster only reads from onboarded hosts; it never writes into them."
+     ].join("\n"),
+     zh:[
+      "# host-onboarding · 中文说明",
+      "",
+      "**用途**:接入一个新工具时,逐项核对检查清单。",
+      "",
+      "## 适用任务",
+      "",
+      "- 装了新的 AI 工具,想让 Aster 识别它",
+      "- 工具更新后重新核对一遍",
+      "",
+      "## 目标工具",
+      "",
+      "DSH、Cursor(其余工具陆续接入)",
+      "",
+      "## 前置条件",
+      "",
+      "- 工具已经安装在本机",
+      "",
+      "## 风险",
+      "",
+      "只生成只读档案,Aster 不会往工具目录里写任何东西。",
+      "",
+      "---",
+      "来源快照 `d7e8f9` · 作者 workbench,更新于 2026-08-02"
+     ].join("\n")}
+  ];
+  var activeTool="all";
+  var sideToolList=document.getElementById("side-tool-list");
+  var skillsGrid=document.getElementById("skills-grid");
+  var skillsBrowser=document.getElementById("skills-browser");
+  var skillPage=document.getElementById("skill-page");
+  var spName=document.getElementById("sp-name");
+  var spMeta=document.getElementById("sp-meta");
+  var spPurpose=document.getElementById("sp-purpose-text");
+  var spChips=document.getElementById("sp-chips");
+  var spFlow=document.getElementById("sp-flow");
+  var spMd=document.getElementById("sp-md");
+  var spDocTitle=document.getElementById("sp-doc-title");
+  var spDocHint=document.getElementById("sp-doc-hint");
+  var currentSkill=null,docLang="zh";
+
+  /* 轻量 markdown 渲染:标题/列表/代码块/引用/分隔线/行内样式 */
+  function mdInline(t){
+    return t.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")
+      .replace(/`([^`]+)`/g,"<code>$1</code>")
+      .replace(/\*\*([^*]+)\*\*/g,"<strong>$1</strong>");
+  }
+  function renderMarkdown(src){
+    var lines=src.split("\n"),out=[],inCode=false,codeBuf=[],listTag=null;
+    function closeList(){if(listTag){out.push("</"+listTag+">");listTag=null;}}
+    function esc(t){return t.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");}
+    for(var i=0;i<lines.length;i++){
+      var ln=lines[i],m;
+      if(/^\s*```/.test(ln)){
+        if(inCode){out.push("<pre><code>"+codeBuf.join("\n")+"</code></pre>");codeBuf=[];inCode=false;}
+        else{closeList();inCode=true;}
+        continue;
+      }
+      if(inCode){codeBuf.push(esc(ln));continue;}
+      if(/^\s*$/.test(ln)){closeList();continue;}
+      if(m=ln.match(/^(#{1,3})\s+(.*)/)){closeList();out.push("<h"+m[1].length+">"+mdInline(m[2])+"</h"+m[1].length+">");continue;}
+      if(/^\s*---+\s*$/.test(ln)){closeList();out.push("<hr>");continue;}
+      if(m=ln.match(/^>\s?(.*)/)){closeList();out.push("<blockquote>"+mdInline(m[1])+"</blockquote>");continue;}
+      if(m=ln.match(/^\s*[-*]\s+(.*)/)){
+        if(listTag!=="ul"){closeList();out.push("<ul>");listTag="ul";}
+        out.push("<li>"+mdInline(m[1])+"</li>");continue;
+      }
+      if(m=ln.match(/^\s*\d+[.)]\s+(.*)/)){
+        if(listTag!=="ol"){closeList();out.push("<ol>");listTag="ol";}
+        out.push("<li>"+mdInline(m[1])+"</li>");continue;
+      }
+      closeList();out.push("<p>"+mdInline(ln)+"</p>");
+    }
+    closeList();
+    if(inCode)out.push("<pre><code>"+codeBuf.join("\n")+"</code></pre>");
+    return out.join("");
+  }
+
+  function skillsFor(tool){
+    return tool==="all"?SKILLS:SKILLS.filter(function(s){return s.tools.indexOf(tool)>=0;});
+  }
+  function showBrowser(){
+    if(skillPage){skillPage.hidden=true;skillPage.classList.remove("page-in");}
+    if(skillsBrowser){
+      skillsBrowser.hidden=false;
+      skillsBrowser.classList.remove("browser-in");void skillsBrowser.offsetWidth;
+      skillsBrowser.classList.add("browser-in");
+    }
+  }
+  function renderToolList(){
+    if(!sideToolList)return;
+    sideToolList.innerHTML="";
+    var all=document.createElement("button");
+    all.type="button";
+    all.className="tool-item"+(activeTool==="all"?" on":"");
+    all.innerHTML='<span class="t-name">全部工具</span><span class="count">'+SKILLS.length+'</span>';
+    all.addEventListener("click",function(){activeTool="all";showBrowser();renderToolList();renderSkills();});
+    sideToolList.appendChild(all);
+    TOOLS.forEach(function(t){
+      var n=skillsFor(t).length;
+      var b=document.createElement("button");
+      b.type="button";
+      b.className="tool-item"+(activeTool===t?" on":"");
+      b.innerHTML='<span class="t-name">'+t+'</span><span class="count">'+(n||"")+'</span>';
+      b.addEventListener("click",function(){activeTool=t;showBrowser();renderToolList();renderSkills();});
+      sideToolList.appendChild(b);
+    });
+  }
+  function renderSkills(){
+    if(!skillsGrid)return;
+    var list=skillsFor(activeTool);
+    skillsGrid.innerHTML="";
+    if(!list.length){
+      skillsGrid.innerHTML='<div class="skills-empty">'+activeTool+' 下还没有安装任何 skill</div>';
+      return;
+    }
+    list.forEach(function(s,i){
+      var b=document.createElement("button");
+      b.type="button";
+      b.className="skill-card";
+      b.style.animationDelay=(Math.min(i,5)*30)+"ms"; /* 小 stagger,封顶 5 格 */
+      b.setAttribute("data-od-id","skill-card-"+s.id);
+      b.innerHTML='<span class="sc-name">'+s.id+'</span>'+
+        '<span class="sc-desc">'+s.desc+'</span>'+
+        '<span class="sc-foot">'+s.tools.map(function(t){return '<span class="sc-tool">'+t+'</span>';}).join("")+
+        '<span class="sc-date">'+s.updated+'</span></span>';
+      b.addEventListener("click",function(){openSkill(s.id);});
+      skillsGrid.appendChild(b);
+    });
+  }
+  function renderDoc(){
+    if(!currentSkill)return;
+    var zh=docLang==="zh";
+    spDocTitle.textContent=zh?"中文说明":"原文";
+    spDocHint.textContent=zh?"独立 Markdown":"只读快照 · 英文原始内容";
+    spMd.innerHTML=renderMarkdown(zh?currentSkill.zh:currentSkill.original);
+  }
+  function openSkill(id){
+    var s=SKILLS.filter(function(x){return x.id===id;})[0];
+    if(!s||!skillPage)return;
+    currentSkill=s;
+    spName.textContent=s.id;
+    spMeta.textContent="可用于 "+s.tools.join("、")+" · 最近更新 "+s.updated+",来源 skills-hub 仓库";
+    spPurpose.textContent=s.desc;
+    spChips.innerHTML=s.tools.map(function(t){return '<span class="sc-tool">'+t+'</span>';}).join("");
+    spFlow.innerHTML=s.flow.map(function(step,i){
+      return (i?'<span class="flow-arrow"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M6 3l5 5-5 5"/></svg></span>':"")+
+        '<span class="flow-node"><span class="fn">'+(i+1)+'</span>'+step+'</span>';
+    }).join("");
+    docLang="zh";
+    document.querySelectorAll("#sp-seg button").forEach(function(x){
+      x.classList.toggle("on",x.getAttribute("data-lang")==="zh");
+    });
+    renderDoc();
+    skillsBrowser.hidden=true;
+    skillsBrowser.classList.remove("browser-in");
+    skillPage.hidden=false;
+    skillPage.classList.remove("page-in");void skillPage.offsetWidth;
+    skillPage.classList.add("page-in");
+  }
+  document.querySelectorAll("#sp-seg button").forEach(function(b){
+    b.addEventListener("click",function(){
+      docLang=b.getAttribute("data-lang");
+      document.querySelectorAll("#sp-seg button").forEach(function(x){x.classList.toggle("on",x===b);});
+      renderDoc();
+    });
+  });
+  var spBack=document.getElementById("sp-back");
+  if(spBack)spBack.addEventListener("click",showBrowser);
+  renderToolList();
+  renderSkills();
+
+  /* ---- Pi:新对话(compose)/ 会话(chat)两种状态 ---- */
+  var piCompose=document.getElementById("pi-compose");
+  var piChat=document.getElementById("pi-chat");
+  function showPiCompose(){if(piCompose)piCompose.hidden=false;if(piChat)piChat.hidden=true;}
+  function showPiChat(){if(piCompose)piCompose.hidden=true;if(piChat)piChat.hidden=false;}
+  var navHomeBtn=document.getElementById("nav-home");
+  if(navHomeBtn)navHomeBtn.addEventListener("click",function(){showPiCompose();});
+  document.querySelectorAll("[data-pi-open]").forEach(function(b){
+    b.addEventListener("click",function(){showPiChat();});
+  });
+  document.querySelectorAll(".suggest-row .chip").forEach(function(c){
+    c.addEventListener("click",function(){
+      var ta=document.querySelector("#pi-compose textarea");
+      if(ta){ta.value=c.textContent+":";ta.focus();}
+    });
+  });
+
+  /* 发送:把输入追加到消息流并滚到底部(纯前端演示,未连接真实 Pi) */
+  var piTranscript=document.querySelector(".pi-transcript");
+  function appendUserMsg(text){
+    if(!piTranscript)return;
+    var m=document.createElement("div");
+    m.className="msg user msg-in";
+    m.innerHTML='<div class="role">你 · 刚刚</div><div class="bubble"></div>';
+    m.querySelector(".bubble").textContent=text;
+    piTranscript.appendChild(m);
+    piTranscript.scrollTop=piTranscript.scrollHeight;
+  }
+  /* compose 态:点发送时若已输入文字,带入会话作为第一条新消息 */
+  var composeTa=document.querySelector("#pi-compose textarea");
+  var composeSend=document.querySelector("[data-od-id='pi-send']");
+  if(composeSend&&composeTa){
+    composeSend.addEventListener("click",function(){
+      var v=composeTa.value.trim();
+      if(v){appendUserMsg(v);composeTa.value="";}
+    });
+  }
+  /* 会话态:Enter 发送(Shift+Enter 换行),或点「发送」按钮 */
+  var chatTa=document.getElementById("pi-chat-text");
+  var chatSend=document.getElementById("pi-chat-send");
+  function sendChat(){
+    if(!chatTa)return;
+    var v=chatTa.value.trim();
+    if(!v)return;
+    appendUserMsg(v);
+    chatTa.value="";
+    chatTa.focus();
+  }
+  if(chatSend)chatSend.addEventListener("click",sendChat);
+  if(chatTa)chatTa.addEventListener("keydown",function(e){
+    if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();sendChat();}
+  });
+
+  /* ---- 侧边栏宽度:拖拽调节,按模式(完整/窄)分别记忆 ---- */
+  var sideResize=document.getElementById("side-resize");
+  var sideWidths={full:248,slim:176};
+  try{
+    var rawW=window.localStorage.getItem("aster.sideWidths");
+    if(rawW){
+      var pw=JSON.parse(rawW);
+      if(pw&&typeof pw==="object"){
+        if(pw.full)sideWidths.full=pw.full;
+        if(pw.slim)sideWidths.slim=pw.slim;
+      }
+    }
+  }catch(e){}
+  function applySideWidth(){
+    if(!sidebar)return;
+    var mode=sidebar.classList.contains("slim")?"slim":"full";
+    sidebar.style.width=sideWidths[mode]+"px";
+  }
+  if(sideResize&&sidebar){
+    sideResize.addEventListener("pointerdown",function(e){
+      e.preventDefault();
+      var startX=e.clientX;
+      var mode=sidebar.classList.contains("slim")?"slim":"full";
+      var startW=sidebar.getBoundingClientRect().width;
+      var min=mode==="slim"?140:200,max=mode==="slim"?300:420;
+      sideResize.classList.add("dragging");
+      document.body.style.userSelect="none";
+      function onMove(ev){
+        var w=Math.min(max,Math.max(min,startW+ev.clientX-startX));
+        sideWidths[mode]=Math.round(w);
+        applySideWidth();
+      }
+      function onUp(){
+        sideResize.classList.remove("dragging");
+        document.body.style.userSelect="";
+        document.removeEventListener("pointermove",onMove);
+        document.removeEventListener("pointerup",onUp);
+        try{window.localStorage.setItem("aster.sideWidths",JSON.stringify(sideWidths));}catch(e){}
+      }
+      document.addEventListener("pointermove",onMove);
+      document.addEventListener("pointerup",onUp);
+    });
+  }
+
+  /* ---- 初始视图 ---- */
+  var stored=null;
+  try{stored=window.localStorage.getItem("aster.activeView");}catch(e){}
+  var valid=["home","pi","dsh","skills","agents","infra"];
+  var initial=valid.indexOf(stored)>=0?stored:"home";
+  if(SERVICES.some(function(s){return s.id===initial;})&&openTabs.indexOf(initial)<0){
+    initial=openTabs.length?openTabs[0]:"home";
+  }
+  setView(initial);
+})();
+</script>
+</body>
+</html>
