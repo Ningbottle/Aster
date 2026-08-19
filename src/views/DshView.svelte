@@ -16,6 +16,19 @@
   $: hasDsh = dshRuntimes.some((r) => r.version === "0.1.0-rc.6");
   $: targetUrl = dshStatus?.url || "http://127.0.0.1:38472";
   $: isRunning = !!dshStatus?.running;
+  $: dshLifecycle = starting
+    ? "Starting"
+    : stopping
+      ? "Stopping"
+      : dshStatus?.lifecycle === "ready"
+        ? "Ready"
+        : dshStatus?.lifecycle === "crashed"
+          ? "Crashed"
+          : dshStatus?.lifecycle === "unknown"
+            ? "Unknown"
+            : hasDsh
+              ? "Closed"
+              : "Needs setup";
 
   export async function installManagedDsh() {
     installingDsh = true;
@@ -77,11 +90,20 @@
   <div class="dsh-bar">
     <div class="dsh-bar-left">
       <span class="dsh-title">DeepSeek Harness</span>
+      <span class="tag neutral sm">{dshLifecycle}</span>
       {#if isRunning}
         <span class="tag ok">
           <span class="status-dot run"></span>
-          运行中 · {dshStatus?.url}
+          运行中 · {dshStatus?.url}{dshStatus?.pid ? ` (PID: ${dshStatus.pid})` : ""}
         </span>
+        <span class="tag neutral sm">原生 Web UI ({dshStatus?.version})</span>
+        {#if dshStatus?.healthy}
+          <span class="tag ok sm">健康（boot manifest 已注入）</span>
+        {:else if dshStatus?.static_ok}
+          <span class="tag neutral sm">静态可达，boot 注入未验证</span>
+        {:else}
+          <span class="tag neutral sm">进程存活，HTTP 未就绪</span>
+        {/if}
       {:else}
         <span class="tag neutral">已停止</span>
       {/if}
@@ -93,7 +115,7 @@
           <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M2.5 8a5.5 5.5 0 101.6-3.9L2 6.5M2 2.5v4h4" /></svg>
           刷新
         </button>
-        <button type="button" class="btn sm" on:click={openExternalWindow} title="在原生独立窗口中查看">
+        <button type="button" class="btn sm" on:click={openExternalWindow} title="在原生独立 WebView 窗口中查看">
           <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M6 3H3a1 1 0 00-1 1v9a1 1 0 001 1h9a1 1 0 001-1v-3M10 2h4v4M9 7l5-5" /></svg>
           独立窗口
         </button>
@@ -119,7 +141,7 @@
         <iframe
           src={targetUrl}
           title="DeepSeek Harness 原生 Web UI"
-          sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
+          sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-downloads"
         ></iframe>
       {/key}
     {:else}

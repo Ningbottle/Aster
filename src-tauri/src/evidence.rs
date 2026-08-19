@@ -1,4 +1,4 @@
-//! EvidenceStore 核心（content.md §8）。
+//! EvidenceStore 核心。
 //!
 //! 证据是带来源的观察记录，概念键为
 //! `skill_snapshot_id × target_host_id × host_version × deployment_scope × profile_version`。
@@ -251,8 +251,16 @@ mod tests {
     fn append_then_query_latest() {
         let conn = setup();
         let key = sample_key();
-        append(&conn, &sample_record(&key, Stage::Downloaded, Status::Failure)).unwrap();
-        append(&conn, &sample_record(&key, Stage::Downloaded, Status::Success)).unwrap();
+        append(
+            &conn,
+            &sample_record(&key, Stage::Downloaded, Status::Failure),
+        )
+        .unwrap();
+        append(
+            &conn,
+            &sample_record(&key, Stage::Downloaded, Status::Success),
+        )
+        .unwrap();
 
         let latest = latest_by_stage(&conn, &key).unwrap();
         assert_eq!(latest.len(), 1);
@@ -266,7 +274,11 @@ mod tests {
         let key = sample_key();
         let mut other = sample_key();
         other.host_version = "9.9.9".into();
-        append(&conn, &sample_record(&key, Stage::Discovered, Status::Success)).unwrap();
+        append(
+            &conn,
+            &sample_record(&key, Stage::Discovered, Status::Success),
+        )
+        .unwrap();
         assert!(latest_by_stage(&conn, &other).unwrap().is_empty());
     }
 
@@ -274,8 +286,16 @@ mod tests {
     fn invalidate_marks_records_stale() {
         let conn = setup();
         let key = sample_key();
-        append(&conn, &sample_record(&key, Stage::Discovered, Status::Success)).unwrap();
-        append(&conn, &sample_record(&key, Stage::Downloaded, Status::Success)).unwrap();
+        append(
+            &conn,
+            &sample_record(&key, Stage::Discovered, Status::Success),
+        )
+        .unwrap();
+        append(
+            &conn,
+            &sample_record(&key, Stage::Downloaded, Status::Success),
+        )
+        .unwrap();
 
         assert_eq!(invalidate_key(&conn, &key).unwrap(), 2);
         assert_eq!(

@@ -1,11 +1,13 @@
 <script lang="ts">
   import type { DshStatus, PiRuntime, ViewId } from "../types";
+  import ProjectSelector from "../components/ProjectSelector.svelte";
 
   export let piRuntimes: PiRuntime[] = [];
   export let dshStatus: DshStatus | null = null;
   export let totalSkillsCount: number = 0;
   export let onSelectView: (id: ViewId) => void;
   export let onOpenPiChat: () => void;
+  export let onProjectChange: (() => Promise<void>) | undefined = undefined;
 
   $: hasPi = piRuntimes.some((r) => r.version === "0.84.2");
   $: isDshRunning = !!dshStatus?.running;
@@ -16,6 +18,11 @@
     <div class="show-hero">
       <h1 class="show-title">Aster 工作台</h1>
       <p class="show-sub">本机的多宿主智能体工作台。在一个窗口里管理 Pi 会话、DeepSeek Harness 原生界面，以及各个 AI 工具里安装的 skills。</p>
+      
+      <div style="margin-top: 14px; margin-bottom: 14px;">
+        <ProjectSelector on:change={() => onProjectChange?.()} />
+      </div>
+
       <div class="show-status">
         <span class="ss">
           <span class="status-dot" class:run={hasPi} class:warn={!hasPi}></span>

@@ -1,4 +1,4 @@
-//! 结构化 JSONL 日志与脱敏（content.md §11）。
+//! 结构化 JSONL 日志与脱敏。
 //!
 //! 任何文本进入日志前必须经过 [`redact`]。禁止记录：密钥、authorization
 //! header、环境变量值、对话原文、用户名和原始绝对路径。M0 实现并测试其中
@@ -47,7 +47,10 @@ fn find_ascii_ci(hay: &str, needle: &str, from: usize) -> Option<usize> {
 }
 
 fn is_delimiter(b: u8) -> bool {
-    matches!(b, b'\\' | b'/' | b'"' | b'\'' | b' ' | b'\t' | b'\r' | b'\n' | b':')
+    matches!(
+        b,
+        b'\\' | b'/' | b'"' | b'\'' | b' ' | b'\t' | b'\r' | b'\n' | b':'
+    )
 }
 
 /// 保证 end 落在字符边界上（字节扫描可能停在多字节字符中间）。
@@ -180,7 +183,10 @@ impl JsonlLogger {
             "kind": kind,
             "message": redact(message),
         });
-        let mut file = OpenOptions::new().create(true).append(true).open(&self.path)?;
+        let mut file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&self.path)?;
         writeln!(file, "{line}")
     }
 
@@ -238,7 +244,11 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let logger = JsonlLogger::create(tmp.path().join("logs").join("aster.jsonl")).unwrap();
         logger
-            .log("info", "startup", r"home is C:\Users\carol, key=sk-abcdef123456")
+            .log(
+                "info",
+                "startup",
+                r"home is C:\Users\carol, key=sk-abcdef123456",
+            )
             .unwrap();
 
         let content = std::fs::read_to_string(logger.path()).unwrap();

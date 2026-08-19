@@ -43,7 +43,8 @@ fn test_m1_skill_deployment_evidence_and_rollback_flow() {
     skill_flow::record_snapshot(&conn, &source, &snap).unwrap();
 
     // 再次调用 create_snapshot 幂等复用
-    let snap_reuse = skill_flow::create_snapshot(&layout.skills, &source, &extracted_skill).unwrap();
+    let snap_reuse =
+        skill_flow::create_snapshot(&layout.skills, &source, &extracted_skill).unwrap();
     assert_eq!(snap_reuse.id, snap.id);
 
     // 4. 部署到 Aster 管理的测试作用域
@@ -67,7 +68,8 @@ fn test_m1_skill_deployment_evidence_and_rollback_flow() {
     stages.insert(Stage::TargetDiscovered, Status::Success);
     stages.insert(Stage::SessionLoaded, Status::Unknown);
     stages.insert(Stage::CallableVerified, Status::Unknown);
-    skill_flow::record_evidence_chain(&conn, &snap.id, "pi", "0.84.2", "aster-test-scope", &stages).unwrap();
+    skill_flow::record_evidence_chain(&conn, &snap.id, "pi", "0.84.2", "aster-test-scope", &stages)
+        .unwrap();
 
     // 6. 验证活跃部署查询
     let active = skill_flow::active_deployments_for_host(&conn, "pi").unwrap();

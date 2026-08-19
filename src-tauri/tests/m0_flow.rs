@@ -45,14 +45,24 @@ fn full_m0_flow_on_real_files() {
     )
     .unwrap();
     assert_eq!(evidence::count(&conn2).unwrap(), 1);
-    assert_eq!(evidence::latest_status_of_stage(&conn2, &key, Stage::Discovered).unwrap(), Some(Status::Success));
+    assert_eq!(
+        evidence::latest_status_of_stage(&conn2, &key, Stage::Discovered).unwrap(),
+        Some(Status::Success)
+    );
     assert_eq!(evidence::invalidate_key(&conn2, &key).unwrap(), 1);
-    assert_eq!(evidence::latest_status_of_stage(&conn2, &key, Stage::Discovered).unwrap(), Some(Status::Stale));
+    assert_eq!(
+        evidence::latest_status_of_stage(&conn2, &key, Stage::Discovered).unwrap(),
+        Some(Status::Stale)
+    );
 
     // 脱敏日志写入真实文件
     let logger = JsonlLogger::create(layout.logs.join("aster.jsonl")).unwrap();
     logger
-        .log("info", "integration", r"path C:\Users\dave\repo token ghp_abc123def456")
+        .log(
+            "info",
+            "integration",
+            r"path C:\Users\dave\repo token ghp_abc123def456",
+        )
         .unwrap();
     let content = std::fs::read_to_string(layout.logs.join("aster.jsonl")).unwrap();
     assert!(!content.contains("dave") && !content.contains("abc123def456"));

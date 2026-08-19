@@ -187,8 +187,9 @@ impl PiProcess for LockedPiSession {
         watcher.wait_settled(timeout)
     }
     fn stop(&self) -> std::io::Result<()> {
-        self.inner
-            .lock()
+        // 审计关注点：restart() 会在持有 active 锁时调用这里，从而形成
+        // active -> inner 的锁序。这里记录 inner 的实际等待时长。
+        crate::diag::lock_wait("pi.session.inner(stop)", &self.inner)
             .map_err(|_| std::io::Error::new(std::io::ErrorKind::Other, "session lock poisoned"))?
             .stop()
     }
@@ -198,8 +199,7 @@ impl PiProcess for LockedPiSession {
 }
 
 fn lock_session(inner: &Mutex<PiSession>) -> Result<std::sync::MutexGuard<'_, PiSession>, String> {
-    inner
-        .lock()
+    crate::diag::lock_wait("pi.session.inner", inner)
         .map_err(|e| format!("session lock failed: {e}"))
 }
 
@@ -370,9 +370,9 @@ impl PiRuntimeManager {
     }
 
     pub fn stop(&self) -> Result<(), String> {
-        let mut guard = self
-            .active
-            .lock()
+        // 退出路径也走这里，且用的是阻塞 lock（与 DshSlot 的 try_lock 不对称）。
+        // 若这条 lock 记录出现较大 wait_ms，就是退出被锁住的直接证据。
+        let mut guard = crate::diag::lock_wait("pi.runtime.active(stop)", &self.active)
             .map_err(|e| format!("runtime lock failed: {e}"))?;
         if let Some(old) = guard.take() {
             let _ = old.session.stop();
@@ -545,11 +545,11 @@ impl PiRuntimeManager {
             if let Some(session) = session {
                 self.ensure_not_busy(session.as_ref())?;
             }
-            let mut guard = self
-                .active
-                .lock()
+            let mut guard = crate::diag::lock_wait("pi.runtime.active(restart)", &self.active)
                 .map_err(|e| PiOpenError::RpcFailed(format!("runtime lock failed: {e}")))?;
             if let Some(old) = guard.take() {
+                // 注意：此处仍持有 active 锁并进入 inner 锁 + taskkill。
+                let _span = crate::diag::span("shutdown", "restart_stop_old_session");
                 let _ = old.session.stop();
             }
         }

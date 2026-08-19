@@ -2,6 +2,7 @@
   import { onMount } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
   import { renderMarkdown } from "../lib/markdown";
+  import GithubAuthModal from "../components/GithubAuthModal.svelte";
   import type {
     DiscoveredHost,
     DiscoveredSkillSummary,
@@ -12,6 +13,8 @@
     DeploymentPlan,
     BatchDeployResult,
     DeploymentTarget,
+    GithubAuthStatus,
+    QuarantineItem,
   } from "../types";
 
   export let activeTool: string = "all";
@@ -22,11 +25,30 @@
   let currentSkill: SkillItem | null = null;
   let docLang: "zh" | "en" = "zh";
 
-  // 仓库扫描状态
+  // 来源分段选择器
+  let sourceTab: "local" | "github" | "quarantine" = "local";
+
+  // 本地扫描状态
   let scanRepoPath = "";
   let isScanningRepo = false;
   let scanMsg = "";
   let scanError = false;
+
+  // GitHub 来源扫描状态
+  let githubRepo = "anthropics/skills";
+  let githubRef = "HEAD";
+  let githubSubpath = "";
+  let isScanningGithub = false;
+  let githubMsg = "";
+  let githubError = false;
+  let showGithubModal = false;
+  let authStatus: GithubAuthStatus = { has_token: false, source: "" };
+
+  // 隔离区状态
+  let quarantineItems: QuarantineItem[] = [];
+  let isLoadingQuarantine = false;
+  let quarantineMsg = "";
+  let quarantineError = false;
 
   // 部署计划状态
   let isPlanningDeploy = false;
@@ -40,11 +62,7 @@
   let diffData: SnapshotDiff | null = null;
   let diffMsg = "";
 
-  // 回滚与 M1 流水线状态
-  let isRollingBack = false;
-  let rollbackMsg = "";
-  let isRunningPipeline = false;
-  let pipelineMsg = "";
+
 
   // 派生中文说明编辑
   let isEditingZh = false;
@@ -58,6 +76,39 @@
     activeTool === "all"
       ? skills
       : skills.filter((s) => s.tools.some((t) => t.toLowerCase() === activeTool.toLowerCase()));
+
+  async function checkGithubAuth() {
+    try {
+      authStatus = await invoke<GithubAuthStatus>("github_token_status");
+    } catch {
+      authStatus = { has_token: false, source: "" };
+    }
+  }
+
+  async function loadQuarantine() {
+    try {
+      isLoadingQuarantine = true;
+      quarantineError = false;
+      quarantineMsg = "";
+      quarantineItems = await invoke<QuarantineItem[]>("skill_quarantine_list");
+    } catch (e: any) {
+      quarantineError = true;
+      quarantineMsg = `读取隔离区失败: ${typeof e === "string" ? e : (e?.message || JSON.stringify(e))}`;
+    } finally {
+      isLoadingQuarantine = false;
+    }
+  }
+
+  onMount(() => {
+    checkGithubAuth();
+    if (sourceTab === "quarantine") {
+      loadQuarantine();
+    }
+  });
+
+  $: if (sourceTab === "quarantine") {
+    loadQuarantine();
+  }
 
   export async function openSkillById(id: string) {
     const s = skills.find((x) => x.id === id);
@@ -101,7 +152,7 @@
     if (isScanningRepo) return;
     isScanningRepo = true;
     scanError = false;
-    scanMsg = "正在扫描仓库技能...";
+    scanMsg = "正在扫描本地仓库技能...";
     try {
       const group = await invoke<SkillRepoGroup>("skills_scan_repo", {
         repoPath: scanRepoPath.trim() ? scanRepoPath.trim() : null,
@@ -117,6 +168,50 @@
       scanMsg = `扫描失败: ${typeof e === "string" ? e : (e?.message || JSON.stringify(e))}`;
     } finally {
       isScanningRepo = false;
+    }
+  }
+
+  async function handleScanGithub() {
+    if (isScanningGithub) return;
+    if (!githubRepo.trim()) {
+      githubError = true;
+      githubMsg = "请输入有效的 GitHub 仓库 (例如 anthropics/skills)";
+      return;
+    }
+    isScanningGithub = true;
+    githubError = false;
+    githubMsg = `正在从 GitHub 下载并扫描 ${githubRepo.trim()}...`;
+    try {
+      const group = await invoke<SkillRepoGroup>("skills_scan_github", {
+        repo: githubRepo.trim(),
+        gitRef: githubRef.trim() ? githubRef.trim() : null,
+        skillPath: githubSubpath.trim() ? githubSubpath.trim() : null,
+      });
+
+      if (group && group.skills) {
+        githubMsg = `GitHub 扫描成功：在 ${group.repo_name} 中提取并快照了 ${group.skills.length} 个 Skill！`;
+        await onRefresh();
+      }
+    } catch (e: any) {
+      githubError = true;
+      githubMsg = `GitHub 扫描失败: ${typeof e === "string" ? e : (e?.message || JSON.stringify(e))}`;
+    } finally {
+      isScanningGithub = false;
+    }
+  }
+
+  async function handleDeleteQuarantine(quarantineId: string) {
+    if (!confirm(`确定彻底删除隔离记录 ${quarantineId} 及其磁盘文件吗？该操作不可撤销。`)) {
+      return;
+    }
+    try {
+      quarantineError = false;
+      await invoke("skill_quarantine_delete", { quarantineId });
+      quarantineMsg = `已永久删除隔离项: ${quarantineId}`;
+      await loadQuarantine();
+    } catch (e: any) {
+      quarantineError = true;
+      quarantineMsg = `删除失败: ${typeof e === "string" ? e : (e?.message || JSON.stringify(e))}`;
     }
   }
 
@@ -142,9 +237,19 @@
         return;
       }
 
+      // 严格检查宿主版本信息，禁止 fallback
+      for (const h of availableHosts) {
+        if (!h.profile.profile_version) {
+          deployIsError = true;
+          deployResultMsg = `宿主 ${h.profile.id} 缺少版本信息 (profile_version)，无法生成合规部署计划。`;
+          isPlanningDeploy = false;
+          return;
+        }
+      }
+
       const targets: DeploymentTarget[] = availableHosts.map((h) => ({
         host: h.profile.id,
-        host_version: h.profile.profile_version || "1.0.0",
+        host_version: h.profile.profile_version,
         scope: "user",
         path: "",
       }));
@@ -167,10 +272,19 @@
     applyingDeploy = true;
     deployIsError = false;
     try {
-      // 严格透传 plan 阶段确定的 host_version 与 target_path，保证 Evidence 链键值准确无误
+      // 严格透传 plan 阶段确定的 host_version 与 target_path，保证 Evidence 链键值准确无误，禁止 fallback
+      for (const it of deployPlan.items) {
+        if (!it.host_version) {
+          deployIsError = true;
+          deployResultMsg = `部署计划项 ${it.host_id} 缺少宿主版本信息，无法执行部署。`;
+          applyingDeploy = false;
+          return;
+        }
+      }
+
       const targets: DeploymentTarget[] = deployPlan.items.map((it) => ({
         host: it.host_id,
-        host_version: it.host_version || "1.0.0",
+        host_version: it.host_version!,
         scope: it.scope_kind,
         path: it.target_path,
       }));
@@ -216,39 +330,7 @@
     }
   }
 
-  async function handleRollbackLatest() {
-    if (isRollingBack) return;
-    isRollingBack = true;
-    rollbackMsg = "正在执行最新单次部署回滚...";
-    try {
-      const res = await invoke<{ rolled_back: string[] }>("skill_rollback_latest");
-      if (res.rolled_back.length > 0) {
-        rollbackMsg = `回滚成功！已清理最新部署目录：${res.rolled_back.join("、")}`;
-      } else {
-        rollbackMsg = "当前暂无处于 deployed 状态的活跃部署可供回滚。";
-      }
-      await onRefresh();
-    } catch (e: any) {
-      rollbackMsg = `回滚失败: ${typeof e === "string" ? e : (e?.message || JSON.stringify(e))}`;
-    } finally {
-      isRollingBack = false;
-    }
-  }
 
-  async function handleRunM1Pipeline() {
-    if (isRunningPipeline) return;
-    isRunningPipeline = true;
-    pipelineMsg = "正在运行 M1 示例流水线 (下载 -> 快照 -> 静态检查 -> 部署 -> 验证)...";
-    try {
-      const res: any = await invoke("skill_m1_pipeline");
-      pipelineMsg = `M1 流水线执行成功！快照: ${res.snapshot_id}，已完成 ${res.stages.length} 个阶段。`;
-      await onRefresh();
-    } catch (e: any) {
-      pipelineMsg = `M1 流水线失败: ${typeof e === "string" ? e : (e?.message || JSON.stringify(e))}`;
-    } finally {
-      isRunningPipeline = false;
-    }
-  }
 
   async function handleSaveZh() {
     if (!currentSkill) return;
@@ -291,93 +373,225 @@
         </div>
 
         <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
-          <!-- 扫描本地 Skills 仓库 -->
-          <div class="scan-bar">
-            <input
-              type="text"
-              class="scan-input"
-              placeholder="本地仓库路径（留空扫描 staging/repo）"
-              bind:value={scanRepoPath}
-            />
+          <div class="seg">
             <button
               type="button"
-              class="btn primary sm"
-              disabled={isScanningRepo}
-              on:click={handleScanRepo}
+              class:on={sourceTab === "local"}
+              on:click={() => sourceTab = "local"}
             >
-              {isScanningRepo ? "扫描中..." : "扫描本地仓库"}
+              本地目录
+            </button>
+            <button
+              type="button"
+              class:on={sourceTab === "github"}
+              on:click={() => sourceTab = "github"}
+            >
+              GitHub 仓库
+            </button>
+            <button
+              type="button"
+              class:on={sourceTab === "quarantine"}
+              on:click={() => sourceTab = "quarantine"}
+            >
+              安全隔离区 ({quarantineItems.length})
             </button>
           </div>
-
-          <button
-            type="button"
-            class="btn sm"
-            disabled={isRunningPipeline}
-            on:click={handleRunM1Pipeline}
-            title="执行 M1 测试流水线（下载、快照、静态检查、部署与验证）"
-          >
-            {isRunningPipeline ? "运行中..." : "运行 M1 示例流水线"}
-          </button>
-
-          <button
-            type="button"
-            class="btn sm"
-            disabled={isRollingBack}
-            on:click={handleRollbackLatest}
-            title="撤销最近的部署"
-          >
-            {isRollingBack ? "回滚中..." : "回滚最新部署"}
-          </button>
         </div>
       </div>
 
-      {#if scanMsg}
+      <!-- 来源控制面板 -->
+      <div class="source-panel">
+        {#if sourceTab === "local"}
+          <div class="panel-row">
+            <div class="scan-bar">
+              <input
+                type="text"
+                class="scan-input"
+                placeholder="本地仓库绝对路径（留空使用 staging/repo）"
+                bind:value={scanRepoPath}
+              />
+              <button
+                type="button"
+                class="btn primary sm"
+                disabled={isScanningRepo}
+                on:click={handleScanRepo}
+              >
+                {isScanningRepo ? "扫描中..." : "扫描本地仓库"}
+              </button>
+            </div>
+
+          </div>
+        {:else if sourceTab === "github"}
+          <div class="panel-row github-row">
+            <div class="gh-inputs">
+              <input
+                type="text"
+                class="scan-input gh-repo"
+                placeholder="GitHub 仓库 (例如: anthropics/skills)"
+                bind:value={githubRepo}
+              />
+              <input
+                type="text"
+                class="scan-input gh-ref"
+                placeholder="分支/Commit (默认 HEAD)"
+                bind:value={githubRef}
+              />
+              <input
+                type="text"
+                class="scan-input gh-subpath"
+                placeholder="子路径 (可选)"
+                bind:value={githubSubpath}
+              />
+              <button
+                type="button"
+                class="btn primary sm"
+                disabled={isScanningGithub}
+                on:click={handleScanGithub}
+              >
+                {isScanningGithub ? "下载并扫描中..." : "扫描 GitHub 仓库"}
+              </button>
+            </div>
+
+            <div class="gh-auth-bar">
+              {#if authStatus.has_token}
+                <span class="tag ok sm" title="已配置 Windows 凭据管理器授权">GitHub 已授权</span>
+              {:else}
+                <span class="tag neutral sm" title="未连接时仅支持公开仓库">未授权 (仅公开)</span>
+              {/if}
+              <button
+                type="button"
+                class="btn sm"
+                on:click={() => showGithubModal = true}
+              >
+                {authStatus.has_token ? "凭据管理" : "连接 GitHub (私有库)"}
+              </button>
+            </div>
+          </div>
+        {:else if sourceTab === "quarantine"}
+          <div class="panel-row">
+            <span class="desc" style="font-size: 12px; margin: 0;">
+              静态安全检测拦截的可疑/违规 Skill 归档区。根据安全不变量，隔离文件禁止一键恢复，仅提供详情排查与彻底物理删除。
+            </span>
+            <button
+              type="button"
+              class="btn sm"
+              disabled={isLoadingQuarantine}
+              on:click={loadQuarantine}
+            >
+              {isLoadingQuarantine ? "刷新中..." : "刷新隔离列表"}
+            </button>
+          </div>
+        {/if}
+      </div>
+
+      {#if scanMsg && sourceTab === "local"}
         <div style="padding: 10px 28px 0;">
           <div class="tag {scanError ? 'err' : 'info'}">{scanMsg}</div>
         </div>
       {/if}
 
-      {#if pipelineMsg}
+      {#if githubMsg && sourceTab === "github"}
         <div style="padding: 10px 28px 0;">
-          <div class="tag info">{pipelineMsg}</div>
+          <div class="tag {githubError ? 'err' : 'info'}">{githubMsg}</div>
         </div>
       {/if}
 
-      {#if rollbackMsg}
+      {#if quarantineMsg && sourceTab === "quarantine"}
         <div style="padding: 10px 28px 0;">
-          <div class="tag info">{rollbackMsg}</div>
+          <div class="tag {quarantineError ? 'err' : 'info'}">{quarantineMsg}</div>
         </div>
       {/if}
 
       <div class="page-body">
-        <div class="skills-grid">
-          {#if filteredSkills.length === 0}
-            <div class="skills-empty" style="grid-column: 1 / -1; padding: 48px 24px; text-align: center; color: var(--muted); border: 1px dashed var(--border-strong); border-radius: var(--r-md);">
-              <div style="font-size: 15px; font-weight: 550; margin-bottom: 6px; color: var(--fg);">暂无已快照的技能</div>
-              <p style="font-size: 12.5px; max-width: 480px; margin: 0 auto 16px;">
-                当前 SQLite 中未记录任何技能快照。可在上方输入本地仓库路径并点击“扫描本地仓库”，或点击“运行 M1 示例流水线”生成第一个真实快照与部署。
-              </p>
-            </div>
-          {:else}
-            {#each filteredSkills as s, i (s.id)}
-              <button
-                type="button"
-                class="skill-card"
-                style="animation-delay: {Math.min(i, 5) * 30}ms;"
-                on:click={() => openSkillById(s.id)}
-              >
-                <span class="sc-name">{s.skill_name || s.id}</span>
-                <span class="sc-desc">{s.desc}</span>
-                <span class="sc-foot">
-                  {#each s.tools as tool}
-                    <span class="sc-tool">{tool}</span>
-                  {/each}
-                  <span class="sc-date">{s.updated}</span>
-                </span>
-              </button>
-            {/each}
-          {/if}
-        </div>
+        {#if sourceTab === "quarantine"}
+          <!-- 隔离区面板 -->
+          <div class="quarantine-container">
+            {#if quarantineItems.length === 0}
+              <div class="skills-empty" style="padding: 40px 20px; text-align: center; color: var(--muted); border: 1px dashed var(--border-strong); border-radius: var(--r-md);">
+                <div style="font-size: 14px; font-weight: 550; margin-bottom: 6px; color: var(--fg);">隔离区空闲</div>
+                <p style="font-size: 12px; margin: 0;">暂无被拦截隔离的危险 Skill，所有已扫描的技能均通过了静态安全检查。</p>
+              </div>
+            {:else}
+              <div class="quarantine-list">
+                {#each quarantineItems as q}
+                  <div class="quarantine-card">
+                    <div class="qc-head">
+                      <div>
+                        <span class="tag err sm" style="margin-right: 6px;">已隔离</span>
+                        <strong class="qc-title">{q.quarantine_id}</strong>
+                        <span class="qc-source faint">来源: {q.source_info} · 拦截时间: {q.quarantined_at}</span>
+                      </div>
+                      <button
+                        type="button"
+                        class="btn sm danger-ghost"
+                        on:click={() => handleDeleteQuarantine(q.quarantine_id)}
+                      >
+                        彻底删除
+                      </button>
+                    </div>
+
+                    <div class="qc-reason">
+                      <strong>拦截原因:</strong> {q.reason} (发现 {q.total_findings} 处静态违规项)
+                    </div>
+
+                    {#if q.findings && q.findings.length > 0}
+                      <div class="qc-findings">
+                        <table class="findings-table">
+                          <thead>
+                            <tr>
+                              <th>违规文件</th>
+                              <th>违规类型</th>
+                              <th>详细描述</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {#each q.findings as f}
+                              <tr>
+                                <td><code>{f.relative_path}</code></td>
+                                <td><span class="tag sm err">{f.finding_type}</span></td>
+                                <td>{f.problem}</td>
+                              </tr>
+                            {/each}
+                          </tbody>
+                        </table>
+                      </div>
+                    {/if}
+                  </div>
+                {/each}
+              </div>
+            {/if}
+          </div>
+        {:else}
+          <!-- 正常技能网格 -->
+          <div class="skills-grid">
+            {#if filteredSkills.length === 0}
+              <div class="skills-empty" style="grid-column: 1 / -1; padding: 48px 24px; text-align: center; color: var(--muted); border: 1px dashed var(--border-strong); border-radius: var(--r-md);">
+                <div style="font-size: 15px; font-weight: 550; margin-bottom: 6px; color: var(--fg);">暂无已快照的技能</div>
+                <p style="font-size: 12.5px; max-width: 480px; margin: 0 auto 16px;">
+                  当前 SQLite 中未记录任何技能快照。可在上方切换「本地目录」或「GitHub 仓库」扫描技能。
+                </p>
+              </div>
+            {:else}
+              {#each filteredSkills as s, i (s.id)}
+                <button
+                  type="button"
+                  class="skill-card"
+                  style="animation-delay: {Math.min(i, 5) * 30}ms;"
+                  on:click={() => openSkillById(s.id)}
+                >
+                  <span class="sc-name">{s.skill_name || s.id}</span>
+                  <span class="sc-desc">{s.desc}</span>
+                  <span class="sc-foot">
+                    {#each s.tools as tool}
+                      <span class="sc-tool">{tool}</span>
+                    {/each}
+                    <span class="sc-date">{s.updated}</span>
+                  </span>
+                </button>
+              {/each}
+            {/if}
+          </div>
+        {/if}
       </div>
     </div>
   {:else}
@@ -623,6 +837,12 @@
       </div>
     </div>
   {/if}
+
+  <GithubAuthModal
+    bind:show={showGithubModal}
+    on:close={() => (showGithubModal = false)}
+    on:authenticated={checkGithubAuth}
+  />
 </div>
 
 <style>
@@ -1019,6 +1239,105 @@
   .zh-editor:focus {
     border-color: var(--accent);
     outline: none;
+  }
+
+  /* Source Panel & Tabs */
+  .source-panel {
+    padding: 12px 28px 0;
+  }
+  .panel-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+  .github-row {
+    justify-content: space-between;
+  }
+  .gh-inputs {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .gh-repo {
+    width: 220px;
+  }
+  .gh-ref {
+    width: 140px;
+  }
+  .gh-subpath {
+    width: 120px;
+  }
+  .gh-auth-bar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  /* Quarantine Styles */
+  .quarantine-container {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .quarantine-list {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .quarantine-card {
+    background: var(--surface);
+    border: 1px solid var(--border-strong);
+    border-left: 3px solid var(--danger, #ef4444);
+    border-radius: var(--r-md);
+    padding: 14px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .qc-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+  }
+  .qc-title {
+    font-size: 13.5px;
+    color: var(--fg);
+    font-family: var(--font-mono);
+  }
+  .qc-source {
+    display: block;
+    font-size: 11.5px;
+    margin-top: 2px;
+  }
+  .qc-reason {
+    font-size: 12.5px;
+    color: var(--fg);
+    background: var(--surface-2);
+    padding: 8px 12px;
+    border-radius: 6px;
+  }
+  .qc-findings {
+    margin-top: 4px;
+    overflow-x: auto;
+  }
+  .findings-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+  }
+  .findings-table th {
+    text-align: left;
+    padding: 6px 10px;
+    border-bottom: 1px solid var(--border);
+    color: var(--muted);
+    font-weight: 600;
+  }
+  .findings-table td {
+    padding: 6px 10px;
+    border-bottom: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.05));
   }
 
   @keyframes cardIn {

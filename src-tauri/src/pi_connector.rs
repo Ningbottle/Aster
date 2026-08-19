@@ -357,6 +357,8 @@ impl PiSession {
             .stdout(Stdio::piped())
             .stderr(Stdio::null());
         let mut child = cmd.spawn()?;
+        let child_pid = child.id();
+        crate::diag::proc_event("spawn", "pi", child_pid);
 
         let stdin = child.stdin.take().expect("piped stdin");
         let stdout = child.stdout.take().expect("piped stdout");
@@ -397,6 +399,12 @@ impl PiSession {
                     obs.observe(&parsed);
                 }
             }
+            // 读取循环退出 = Pi stdout 到达 EOF 或读错误。若此后仍有 command
+            // 在等响应，那些等待必然走满超时——这里的时间戳定位那个断点。
+            crate::diag::record(
+                "pi_reader",
+                serde_json::json!({ "at": "stdout_eof", "pid": child_pid }),
+            );
             *reader_closed.lock().unwrap() = true;
         });
 
@@ -433,6 +441,18 @@ impl PiSession {
     pub fn request(&self, mut body: Value, timeout: Duration) -> Result<Value, String> {
         let id = self.alloc_id();
         body["id"] = json!(id);
+        // 审计期观测点：这是「UI 卡顿时在等什么」的直接答案——调用方若是
+        // 同步 command，本次等待就是主线程消息泵的停摆时长。
+        let mut span = crate::diag::span(
+            "rpc",
+            body.get("type")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown")
+                .to_string(),
+        );
+        if let Some(s) = span.as_mut() {
+            s.note(format!("timeout_ms={}", timeout.as_millis()));
+        }
         let (tx, rx) = std::sync::mpsc::channel();
         self.pending.lock().unwrap().insert(id.clone(), tx);
         self.send_raw(&body)
@@ -441,6 +461,9 @@ impl PiSession {
             Ok(v) => Ok(v),
             Err(_) => {
                 self.pending.lock().unwrap().remove(&id);
+                if let Some(s) = span.as_mut() {
+                    s.note(format!("TIMED OUT after {}ms", timeout.as_millis()));
+                }
                 Err(format!("timed out waiting for response to {body}"))
             }
         }
@@ -571,7 +594,9 @@ impl PiSession {
 
     /// 停止会话进程树。
     pub fn stop(&mut self) -> std::io::Result<()> {
-        crate::supervisor::kill_process_tree(self.child.id())
+        let pid = self.child.id();
+        crate::diag::proc_event("stop_requested", "pi", pid);
+        crate::supervisor::kill_process_tree(pid)
     }
 }
 

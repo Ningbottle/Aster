@@ -1,6 +1,6 @@
 //! 前后端 Serde 反序列化与序列化契约测试（Contract Tests）。
 //!
-//! 根据 AGENTS.md 与 ADR-0005 约束：
+//! 前端 invoke 参数与 Rust command DTO 的契约测试：
 //! - 为每个 invoke 参数结构与返回值建立契约测试（读取真实前端生成的 fixture 文件进行 serde round-trip）；
 //! - 验证字段命名别名（如 host vs host_id, scope vs scope_kind）、默认值缺省处理、
 //!   枚举 snake_case 命名以及路径安全解析。
@@ -10,10 +10,10 @@ use aster_lib::pi_commands::{
     PiSessionIndexRemoveArgs, PiSessionOpenArgs, PiSessionPromptArgs, PiSessionSetModelArgs,
     PiSessionSetNameArgs, PiSessionSetThinkingArgs, PiSessionSummaryDto, PERMISSION_SUMMARY,
 };
+use aster_lib::pi_runtime::PiRuntimeSnapshotDto;
 use aster_lib::skill_flow::{
-    self, BatchDeployResult, DeploymentPlanItem,
-    DeploymentTarget, PlanItemStatus,
-    SnapshotDiff, TranslationDoc,
+    self, BatchDeployResult, DeploymentPlanItem, DeploymentTarget, PlanItemStatus, SnapshotDiff,
+    TranslationDoc,
 };
 use aster_lib::SkillItemDto;
 use serde::Deserialize;
@@ -106,8 +106,8 @@ fn contract_deployment_target_fixtures() {
 
     // 3. 最小格式
     let min_val = &fixtures["DeploymentTarget_minimal"];
-    let min_target: DeploymentTarget = serde_json::from_value(min_val.clone())
-        .expect("DeploymentTarget_minimal 应当反序列化成功");
+    let min_target: DeploymentTarget =
+        serde_json::from_value(min_val.clone()).expect("DeploymentTarget_minimal 应当反序列化成功");
     assert_eq!(min_target.host, "cursor");
     assert_eq!(min_target.scope, "project");
 }
@@ -117,9 +117,13 @@ fn contract_invoke_arg_payloads() {
     let fixtures = load_fixtures();
 
     // skills_scan_repo 参数
-    let scan_args: SkillScanRepoArgs = serde_json::from_value(fixtures["SkillScanRepoArgs"].clone())
-        .expect("SkillScanRepoArgs 应当反序列化成功");
-    assert_eq!(scan_args.repo_path, Some(PathBuf::from(r"C:\Aster\staging\repo")));
+    let scan_args: SkillScanRepoArgs =
+        serde_json::from_value(fixtures["SkillScanRepoArgs"].clone())
+            .expect("SkillScanRepoArgs 应当反序列化成功");
+    assert_eq!(
+        scan_args.repo_path,
+        Some(PathBuf::from(r"C:\Aster\staging\repo"))
+    );
     assert_eq!(scan_args.repo_name, Some("anthropics/skills".into()));
 
     // skill_get_diff 参数
@@ -129,22 +133,28 @@ fn contract_invoke_arg_payloads() {
     assert_eq!(diff_args.head_snapshot_id, "snap-v2");
 
     // skill_get_translation 参数
-    let trans_args: SkillGetTranslationArgs = serde_json::from_value(fixtures["SkillGetTranslationArgs"].clone())
-        .expect("SkillGetTranslationArgs 应当反序列化成功");
+    let trans_args: SkillGetTranslationArgs =
+        serde_json::from_value(fixtures["SkillGetTranslationArgs"].clone())
+            .expect("SkillGetTranslationArgs 应当反序列化成功");
     assert_eq!(trans_args.skill_name, "doc-coauthoring");
-    assert_eq!(trans_args.current_snapshot_id, Some("snap-00756142ab04".into()));
+    assert_eq!(
+        trans_args.current_snapshot_id,
+        Some("snap-00756142ab04".into())
+    );
 
     // skill_batch_deploy_plan 参数
-    let plan_args: SkillBatchDeployPlanArgs = serde_json::from_value(fixtures["SkillBatchDeployPlanArgs"].clone())
-        .expect("SkillBatchDeployPlanArgs 应当反序列化成功");
+    let plan_args: SkillBatchDeployPlanArgs =
+        serde_json::from_value(fixtures["SkillBatchDeployPlanArgs"].clone())
+            .expect("SkillBatchDeployPlanArgs 应当反序列化成功");
     assert_eq!(plan_args.snapshot_id, "snap-00756142ab04");
     assert_eq!(plan_args.targets.len(), 2);
     assert_eq!(plan_args.targets[0].host, "pi");
     assert_eq!(plan_args.targets[0].host_version, "0.84.2");
 
     // skill_batch_deploy_apply 参数
-    let apply_args: SkillBatchDeployApplyArgs = serde_json::from_value(fixtures["SkillBatchDeployApplyArgs"].clone())
-        .expect("SkillBatchDeployApplyArgs 应当反序列化成功");
+    let apply_args: SkillBatchDeployApplyArgs =
+        serde_json::from_value(fixtures["SkillBatchDeployApplyArgs"].clone())
+            .expect("SkillBatchDeployApplyArgs 应当反序列化成功");
     assert_eq!(apply_args.snapshot_id, "snap-00756142ab04");
     assert_eq!(apply_args.targets.len(), 1);
 
@@ -174,7 +184,10 @@ fn contract_skill_item_dto_and_translation_doc() {
         .expect("SkillItemDto 应当反序列化成功");
     assert_eq!(dto.id, "snap-00756142ab04-doc-writer");
     assert_eq!(dto.skill_name, "doc-writer");
-    assert_eq!(dto.previous_snapshot_id, Some("snap-000000000000-doc-writer".into()));
+    assert_eq!(
+        dto.previous_snapshot_id,
+        Some("snap-000000000000-doc-writer".into())
+    );
 
     // TranslationDoc
     let doc: TranslationDoc = serde_json::from_value(fixtures["TranslationDoc_sample"].clone())
@@ -187,10 +200,14 @@ fn contract_skill_item_dto_and_translation_doc() {
 #[test]
 fn contract_deployment_plan_item_host_version() {
     let fixtures = load_fixtures();
-    let item: DeploymentPlanItem = serde_json::from_value(fixtures["DeploymentPlanItem_sample"].clone())
-        .expect("DeploymentPlanItem 应当反序列化成功");
+    let item: DeploymentPlanItem =
+        serde_json::from_value(fixtures["DeploymentPlanItem_sample"].clone())
+            .expect("DeploymentPlanItem 应当反序列化成功");
     assert_eq!(item.host_id, "pi");
-    assert_eq!(item.host_version, "0.84.2", "DeploymentPlanItem 应正确包含 host_version");
+    assert_eq!(
+        item.host_version, "0.84.2",
+        "DeploymentPlanItem 应正确包含 host_version"
+    );
     assert_eq!(item.status, PlanItemStatus::Ready);
 }
 
@@ -198,8 +215,9 @@ fn contract_deployment_plan_item_host_version() {
 fn contract_batch_deploy_result_and_snapshot_diff() {
     let fixtures = load_fixtures();
 
-    let res: BatchDeployResult = serde_json::from_value(fixtures["BatchDeployResult_sample"].clone())
-        .expect("BatchDeployResult 应当反序列化成功");
+    let res: BatchDeployResult =
+        serde_json::from_value(fixtures["BatchDeployResult_sample"].clone())
+            .expect("BatchDeployResult 应当反序列化成功");
     assert_eq!(res.success, true);
     assert_eq!(res.deployed_count, 1);
     assert_eq!(res.results[0].deployment_id, Some(42));
@@ -221,7 +239,10 @@ fn contract_strict_path_resolution_and_empty_scope() {
         path: PathBuf::new(),
     }];
     let resolved = skill_flow::resolve_deployment_targets(&empty_scope_target, "test-skill", None);
-    assert!(resolved[0].path.as_os_str().is_empty(), "空 scope 应当保持空路径以被 plan 拦截");
+    assert!(
+        resolved[0].path.as_os_str().is_empty(),
+        "空 scope 应当保持空路径以被 plan 拦截"
+    );
 
     // 2. 不存在的 host/scope 不应生成虚构路径
     let unknown_target = vec![DeploymentTarget {
@@ -230,8 +251,142 @@ fn contract_strict_path_resolution_and_empty_scope() {
         scope: "user".into(),
         path: PathBuf::new(),
     }];
-    let resolved_unknown = skill_flow::resolve_deployment_targets(&unknown_target, "test-skill", None);
-    assert!(resolved_unknown[0].path.as_os_str().is_empty(), "未安装/不存在的宿主不应生成虚构路径");
+    let resolved_unknown =
+        skill_flow::resolve_deployment_targets(&unknown_target, "test-skill", None);
+    assert!(
+        resolved_unknown[0].path.as_os_str().is_empty(),
+        "未安装/不存在的宿主不应生成虚构路径"
+    );
+}
+
+#[derive(Debug, Deserialize)]
+struct ProjectPathArgs {
+    path: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct HostWorkdirSetArgs {
+    host: String,
+    workdir: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct HostWorkdirGetArgs {
+    host: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct SkillsScanGithubArgs {
+    repo: String,
+    #[serde(rename = "gitRef")]
+    git_ref: Option<String>,
+    #[serde(rename = "skillPath")]
+    skill_path: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct GithubDeviceStartArgs {
+    #[serde(rename = "clientId")]
+    client_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct GithubDevicePollArgs {
+    #[serde(rename = "clientId")]
+    client_id: String,
+    #[serde(rename = "deviceCode")]
+    device_code: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct GithubSetPatArgs {
+    pat: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct SkillQuarantineDeleteArgs {
+    #[serde(rename = "quarantineId")]
+    quarantine_id: String,
+}
+
+#[test]
+fn contract_r3_project_and_host_workdir_fixtures() {
+    let fixtures = load_fixtures();
+
+    let proj_args: ProjectPathArgs = serde_json::from_value(fixtures["ProjectChooseArgs"].clone())
+        .expect("ProjectChooseArgs 应当反序列化成功");
+    assert_eq!(proj_args.path, r"C:\Workspace\my-project");
+
+    let set_args: HostWorkdirSetArgs =
+        serde_json::from_value(fixtures["HostWorkdirSetArgs"].clone())
+            .expect("HostWorkdirSetArgs 应当反序列化成功");
+    assert_eq!(set_args.host, "pi");
+    assert_eq!(set_args.workdir, r"C:\Workspace\my-project\pi");
+
+    let get_args: HostWorkdirGetArgs =
+        serde_json::from_value(fixtures["HostWorkdirGetArgs"].clone())
+            .expect("HostWorkdirGetArgs 应当反序列化成功");
+    assert_eq!(get_args.host, "pi");
+
+    let recent: aster_lib::RecentProjectDto =
+        serde_json::from_value(fixtures["RecentProject_sample"].clone())
+            .expect("RecentProject 应当反序列化成功");
+    assert_eq!(recent.display_name, "my-project");
+    assert_eq!(recent.is_active, true);
+}
+
+#[test]
+fn contract_r3_github_and_quarantine_fixtures() {
+    let fixtures = load_fixtures();
+
+    let scan_gh: SkillsScanGithubArgs =
+        serde_json::from_value(fixtures["SkillsScanGithubArgs"].clone())
+            .expect("SkillsScanGithubArgs 应当反序列化成功");
+    assert_eq!(scan_gh.repo, "anthropics/skills");
+    assert_eq!(scan_gh.git_ref, Some("HEAD".into()));
+    assert_eq!(scan_gh.skill_path, Some("skills".into()));
+
+    let dev_start: GithubDeviceStartArgs =
+        serde_json::from_value(fixtures["GithubDeviceStartArgs"].clone())
+            .expect("GithubDeviceStartArgs 应当反序列化成功");
+    assert_eq!(dev_start.client_id, Some("Ov23liAsterDesktop".into()));
+
+    let dev_poll: GithubDevicePollArgs =
+        serde_json::from_value(fixtures["GithubDevicePollArgs"].clone())
+            .expect("GithubDevicePollArgs 应当反序列化成功");
+    assert_eq!(dev_poll.client_id, "Ov23liAsterDesktop");
+    assert_eq!(dev_poll.device_code, "sample-device-code");
+
+    let set_pat: GithubSetPatArgs = serde_json::from_value(fixtures["GithubSetPatArgs"].clone())
+        .expect("GithubSetPatArgs 应当反序列化成功");
+    assert_eq!(set_pat.pat, "ghp_mock_token_for_contract_test_12345");
+
+    let q_del: SkillQuarantineDeleteArgs =
+        serde_json::from_value(fixtures["SkillQuarantineDeleteArgs"].clone())
+            .expect("SkillQuarantineDeleteArgs 应当反序列化成功");
+    assert_eq!(q_del.quarantine_id, "quarantine-snap-mock");
+
+    let dev_resp: aster_lib::DeviceCodeResponse =
+        serde_json::from_value(fixtures["DeviceCodeResponse_sample"].clone())
+            .expect("DeviceCodeResponse 应当反序列化成功");
+    assert_eq!(dev_resp.user_code, "ABCD-1234");
+    assert_eq!(dev_resp.interval, 5);
+
+    let dev_poll_res: aster_lib::DevicePollResult =
+        serde_json::from_value(fixtures["DevicePollResult_sample"].clone())
+            .expect("DevicePollResult 应当反序列化成功");
+    assert_eq!(dev_poll_res.status, "success");
+
+    let auth_status: aster_lib::GithubAuthStatus =
+        serde_json::from_value(fixtures["GithubAuthStatus_sample"].clone())
+            .expect("GithubAuthStatus 应当反序列化成功");
+    assert_eq!(auth_status.has_token, true);
+
+    let q_item: aster_lib::skill_flow::QuarantineItemDto =
+        serde_json::from_value(fixtures["QuarantineItem_sample"].clone())
+            .expect("QuarantineItemDto 应当反序列化成功");
+    assert_eq!(q_item.quarantine_id, "quarantine-test");
+    assert_eq!(q_item.findings.len(), 1);
 }
 
 #[test]
@@ -267,6 +422,12 @@ fn contract_pi_session_command_payloads_are_camel_case() {
     let forget: PiSessionIndexRemoveArgs =
         serde_json::from_value(fixtures["PiSessionIndexRemoveArgs"].clone()).unwrap();
     assert_eq!(forget.session_id, "session-1");
+
+    let snap: PiRuntimeSnapshotDto =
+        serde_json::from_value(fixtures["PiRuntimeSnapshotDto_sample"].clone()).unwrap();
+    assert_eq!(snap.lifecycle, "ready");
+    assert_eq!(snap.has_locked_install, true);
+    assert_eq!(snap.session_id.as_deref(), Some("session-1"));
 
     let active: PiActiveSessionDto =
         serde_json::from_value(fixtures["PiActiveSessionDto_sample"].clone()).unwrap();

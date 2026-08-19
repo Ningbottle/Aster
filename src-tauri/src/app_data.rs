@@ -1,4 +1,4 @@
-//! Aster 应用数据目录布局（content.md §11）。
+//! Aster 应用数据目录布局。
 //!
 //! 默认根目录是 `%LOCALAPPDATA%\Aster`。`ASTER_APP_DATA_DIR` 环境变量只在
 //! 开发与测试中用于重定向根目录，避免测试写入真实用户目录。
@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 
 pub const ROOT_ENV_VAR: &str = "ASTER_APP_DATA_DIR";
 
-/// 数据根目录下的概念分区。命名在此固定（content.md 指明 M0 决定）。
+/// 数据根目录下的固定概念分区。
 #[derive(Debug, Clone)]
 pub struct AppDataLayout {
     pub root: PathBuf,
@@ -32,8 +32,9 @@ impl AppDataLayout {
                 return Ok(PathBuf::from(overridden));
             }
         }
-        let local = dirs::data_local_dir()
-            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "cannot resolve %LOCALAPPDATA%"))?;
+        let local = dirs::data_local_dir().ok_or_else(|| {
+            io::Error::new(io::ErrorKind::NotFound, "cannot resolve %LOCALAPPDATA%")
+        })?;
         Ok(local.join("Aster"))
     }
 

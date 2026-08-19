@@ -12,23 +12,28 @@ fn test_m2_dsh_connector_discovery_and_port_handling() {
     let tmp = tempfile::tempdir().unwrap();
     let layout = AppDataLayout::open(tmp.path()).unwrap();
 
-    // 1. 构造模拟的 managed DSH 目录
+    // 1. 构造模拟的 managed DSH 目录（官方 CLI 包 @deepseek-ai/dsh 布局）
     let dsh_pkg = layout
         .runtimes
         .join("dsh")
         .join("0.1.0-rc.6")
         .join("node_modules")
         .join("@deepseek-ai")
-        .join("dsh-web-app");
+        .join("dsh");
     fs::create_dir_all(dsh_pkg.join("lib")).unwrap();
-    fs::write(dsh_pkg.join("lib").join("index.js"), "console.log('dsh mock');").unwrap();
+    fs::write(dsh_pkg.join("lib").join("bin.js"), "// dsh cli mock").unwrap();
+    fs::write(
+        dsh_pkg.join("package.json"),
+        r#"{"name":"@deepseek-ai/dsh","version":"0.1.0-rc.6","bin":{"dsh":"lib/bin.js"}}"#,
+    )
+    .unwrap();
 
-    // 2. 探测
+    // 2. 探测（只断言 managed；本机若有外部安装不影响）
     let runtimes = dsh_connector::discover(&layout.root);
-    assert_eq!(runtimes.len(), 1);
-    assert_eq!(runtimes[0].version, "0.1.0-rc.6");
-    assert!(runtimes[0].managed);
-    assert!(runtimes[0].supported);
+    let managed: Vec<_> = runtimes.iter().filter(|r| r.managed).collect();
+    assert_eq!(managed.len(), 1);
+    assert_eq!(managed[0].version, "0.1.0-rc.6");
+    assert!(managed[0].supported);
 
     // 3. 端口查找与冲突避让
     let free_port = dsh_connector::find_available_port(39950).unwrap();
@@ -55,4 +60,67 @@ fn test_m2_dsh_connector_discovery_and_port_handling() {
 
     server.stop().unwrap();
     assert!(server.is_stopped());
+
+    // 5. entry_path 指向官方 CLI 入口（启动参数由 DshServer::start 组装）
+    assert!(managed[0].entry_path.ends_with("bin.js"));
+    assert!(std::path::Path::new(&managed[0].entry_path).is_file());
+}
+
+/// R2 失败测试（锁定空白页根因）：仅安装 dsh-web-app（旧 runner 自行拼装
+/// 时代的布局，缺少官方 CLI 与 window.__DSH_BOOT__ 注入链路）的目录，
+/// 不得被 discover 识别为完整宿主。
+#[test]
+fn webapp_only_install_must_not_be_recognized_as_complete_host() {
+    let tmp = tempfile::tempdir().unwrap();
+    let layout = AppDataLayout::open(tmp.path()).unwrap();
+
+    let webapp_pkg = layout
+        .runtimes
+        .join("dsh")
+        .join("0.1.0-rc.6")
+        .join("node_modules")
+        .join("@deepseek-ai")
+        .join("dsh-web-app");
+    fs::create_dir_all(webapp_pkg.join("lib")).unwrap();
+    fs::write(webapp_pkg.join("lib").join("index.js"), "// webapp only").unwrap();
+
+    let runtimes = dsh_connector::discover(&layout.root);
+    assert!(
+        runtimes.iter().all(|r| !r.managed),
+        "仅有 dsh-web-app 的 managed 安装不得被识别为完整宿主：{runtimes:?}"
+    );
+}
+
+/// 与上一条配对：包含官方 CLI 包 @deepseek-ai/dsh（lib/bin.js）的安装
+/// 才是完整宿主，entry_path 指向官方 CLI 入口而非自拼 runner。
+#[test]
+fn full_cli_install_is_recognized_as_complete_host() {
+    let tmp = tempfile::tempdir().unwrap();
+    let layout = AppDataLayout::open(tmp.path()).unwrap();
+
+    let cli_pkg = layout
+        .runtimes
+        .join("dsh")
+        .join("0.1.0-rc.6")
+        .join("node_modules")
+        .join("@deepseek-ai")
+        .join("dsh");
+    fs::create_dir_all(cli_pkg.join("lib")).unwrap();
+    fs::write(cli_pkg.join("lib").join("bin.js"), "// official dsh cli").unwrap();
+    fs::write(
+        cli_pkg.join("package.json"),
+        r#"{"name":"@deepseek-ai/dsh","version":"0.1.0-rc.6","bin":{"dsh":"lib/bin.js"}}"#,
+    )
+    .unwrap();
+
+    let runtimes = dsh_connector::discover(&layout.root);
+    let managed: Vec<_> = runtimes.iter().filter(|r| r.managed).collect();
+    assert_eq!(managed.len(), 1, "官方 CLI 安装应被识别：{runtimes:?}");
+    assert_eq!(managed[0].version, "0.1.0-rc.6");
+    assert!(managed[0].supported);
+    assert!(
+        managed[0].entry_path.ends_with("bin.js"),
+        "entry_path 应指向官方 CLI 入口：{}",
+        managed[0].entry_path
+    );
 }

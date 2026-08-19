@@ -17,31 +17,31 @@
   "TranslationDoc_sample": {
     "skill_name": "doc-coauthoring",
     "snapshot_id": "snap-00756142ab04",
-    "purpose": "\u6587\u6863\u534f\u4f5c\u6280\u80fd",
-    "applicable_tasks": "\u6280\u672f\u6587\u6863\u64b0\u5199\u4e0e\u7ef4\u62a4",
+    "purpose": "文档协作技能",
+    "applicable_tasks": "技术文档撰写与维护",
     "target_tools": [
       "Pi",
       "Cursor",
       "Antigravity"
     ],
-    "prerequisites": "\u65e0\u7279\u6b8a\u4f9d\u8d56",
-    "risks": "\u6807\u51c6\u6743\u9650",
+    "prerequisites": "无特殊依赖",
+    "risks": "标准权限",
     "author": "workbench",
     "updated_at": "2026-08-18T10:00:00Z",
-    "markdown_body": "# doc-coauthoring \u00b7 \u4e2d\u6587\u8bf4\u660e\n\n\u6b63\u6587\u5185\u5bb9",
+    "markdown_body": "# doc-coauthoring · 中文说明\n\n正文内容",
     "is_stale": false
   },
   "SkillItemDto_sample": {
     "id": "snap-00756142ab04-doc-writer",
     "skill_name": "doc-writer",
-    "desc": "\u6587\u6863\u5199\u4f5c\u5de5\u5177",
+    "desc": "文档写作工具",
     "tools": [
       "Pi",
       "Cursor"
     ],
     "updated": "2026-08-18T10:00:00Z",
     "original": "# doc-writer\n\nOriginal instructions.",
-    "zh": "# doc-writer \u00b7 \u4e2d\u6587\u8bf4\u660e",
+    "zh": "# doc-writer · 中文说明",
     "snapshot_id": "snap-00756142ab04-doc-writer",
     "previous_snapshot_id": "snap-000000000000-doc-writer",
     "file_count": 3,
@@ -93,60 +93,6 @@
   "PiPromptArgs": {
     "prompt": "Hello Pi, please summarize our current tasks."
   },
-  "DshStartArgs": {
-    "host": "127.0.0.1",
-    "port": 38472
-  },
-  "DeploymentPlanItem_sample": {
-    "host_id": "pi",
-    "host_version": "0.84.2",
-    "host_display_name": "Pi",
-    "scope_kind": "user",
-    "target_path": "C:\\Users\\test\\.pi\\skills\\doc-coauthoring",
-    "status": "ready",
-    "reason": null
-  },
-  "BatchDeployResult_sample": {
-    "success": true,
-    "deployed_count": 1,
-    "rolled_back_count": 0,
-    "results": [
-      {
-        "host_id": "pi",
-        "target_path": "C:\\Users\\test\\.pi\\skills\\doc-coauthoring",
-        "deployment_id": 42,
-        "success": true,
-        "error": null
-      }
-    ],
-    "error": null
-  },
-  "SnapshotDiff_sample": {
-    "base_snapshot_id": "snap-v1",
-    "head_snapshot_id": "snap-v2",
-    "added_files": [
-      "extra.md"
-    ],
-    "deleted_files": [
-      "old.txt"
-    ],
-    "modified_files": [
-      "SKILL.md"
-    ],
-    "identical_files": [
-      "LICENSE"
-    ],
-    "file_diffs": [
-      {
-        "path": "SKILL.md",
-        "status": "modified",
-        "diff_lines": [
-          "- old line",
-          "+ new line"
-        ]
-      }
-    ]
-  },
   "PiSessionCreateArgs": {
     "projectPath": "C:\\Workspace\\project-a"
   },
@@ -166,6 +112,16 @@
   },
   "PiSessionPromptArgs": {
     "message": "fixture prompt"
+  },
+  "PiSessionIndexRemoveArgs": {
+    "sessionId": "session-1"
+  },
+  "PiRuntimeSnapshotDto_sample": {
+    "lifecycle": "ready",
+    "hasLockedInstall": true,
+    "projectPath": "C:\\Workspace\\project-a",
+    "sessionId": "session-1",
+    "runtimeInstanceId": 1
   },
   "PiActiveSessionDto_sample": {
     "runtimeInstanceId": 1,
@@ -222,7 +178,130 @@
       }
     }
   },
-  "PiSessionIndexRemoveArgs": {
-    "sessionId": "session-1"
+  "DshStartArgs": {
+    "host": "127.0.0.1",
+    "port": 38472
+  },
+  "DeploymentPlanItem_sample": {
+    "host_id": "pi",
+    "host_version": "0.84.2",
+    "host_display_name": "Pi",
+    "scope_kind": "user",
+    "target_path": "C:\\Users\\test\\.pi\\skills\\doc-coauthoring",
+    "status": "ready",
+    "reason": null
+  },
+  "BatchDeployResult_sample": {
+    "success": true,
+    "deployed_count": 1,
+    "rolled_back_count": 0,
+    "results": [
+      {
+        "host_id": "pi",
+        "target_path": "C:\\Users\\test\\.pi\\skills\\doc-coauthoring",
+        "deployment_id": 42,
+        "success": true,
+        "error": null
+      }
+    ],
+    "error": null
+  },
+  "SnapshotDiff_sample": {
+    "base_snapshot_id": "snap-v1",
+    "head_snapshot_id": "snap-v2",
+    "added_files": [
+      "extra.md"
+    ],
+    "deleted_files": [
+      "old.txt"
+    ],
+    "modified_files": [
+      "SKILL.md"
+    ],
+    "identical_files": [
+      "LICENSE"
+    ],
+    "file_diffs": [
+      {
+        "path": "SKILL.md",
+        "status": "modified",
+        "diff_lines": [
+          "- old line",
+          "+ new line"
+        ]
+      }
+    ]
+  },
+  "ProjectChooseArgs": {
+    "path": "C:\\Workspace\\my-project"
+  },
+  "ProjectSetActiveArgs": {
+    "path": "C:\\Workspace\\my-project"
+  },
+  "ProjectRemoveArgs": {
+    "path": "C:\\Workspace\\my-project"
+  },
+  "HostWorkdirSetArgs": {
+    "host": "pi",
+    "workdir": "C:\\Workspace\\my-project\\pi"
+  },
+  "HostWorkdirGetArgs": {
+    "host": "pi"
+  },
+  "SkillsScanGithubArgs": {
+    "repo": "anthropics/skills",
+    "gitRef": "HEAD",
+    "skillPath": "skills"
+  },
+  "GithubDeviceStartArgs": {
+    "clientId": "Ov23liAsterDesktop"
+  },
+  "GithubDevicePollArgs": {
+    "clientId": "Ov23liAsterDesktop",
+    "deviceCode": "sample-device-code"
+  },
+  "GithubSetPatArgs": {
+    "pat": "ghp_mock_token_for_contract_test_12345"
+  },
+  "SkillQuarantineDeleteArgs": {
+    "quarantineId": "quarantine-snap-mock"
+  },
+  "RecentProject_sample": {
+    "path": "C:\\Workspace\\my-project",
+    "display_name": "my-project",
+    "last_opened_at": "2026-08-18T10:00:00Z",
+    "is_active": true
+  },
+  "DeviceCodeResponse_sample": {
+    "device_code": "dev123",
+    "user_code": "ABCD-1234",
+    "verification_uri": "https://github.com/login/device",
+    "expires_in": 900,
+    "interval": 5
+  },
+  "DevicePollResult_sample": {
+    "status": "success",
+    "error": null
+  },
+  "GithubAuthStatus_sample": {
+    "has_token": true,
+    "source": "Windows Credential Manager (aster.github)"
+  },
+  "QuarantineItem_sample": {
+    "id": 1,
+    "quarantine_id": "quarantine-test",
+    "source_info": "https://github.com/bad/repo",
+    "reason": "Found dangerous executable",
+    "quarantined_at": "2026-08-18T10:00:00Z",
+    "quarantine_path": "C:\\Aster\\quarantine\\test",
+    "total_findings": 1,
+    "findings": [
+      {
+        "relative_path": "run.exe",
+        "finding_type": "banned_extension",
+        "problem": "Executable binary detected",
+        "line_number": null
+      }
+    ]
   }
 }

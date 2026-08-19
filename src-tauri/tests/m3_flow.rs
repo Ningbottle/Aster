@@ -13,9 +13,7 @@ use aster_lib::app_data::AppDataLayout;
 use aster_lib::db;
 use aster_lib::evidence::{self, EvidenceKey, Stage, Status};
 use aster_lib::host_profile;
-use aster_lib::skill_flow::{
-    self, DeploymentTarget, SkillSource, TranslationDoc,
-};
+use aster_lib::skill_flow::{self, DeploymentTarget, SkillSource, TranslationDoc};
 use chrono::Utc;
 use std::fs;
 use std::path::Path;
@@ -34,7 +32,10 @@ fn test_m3_skills_manager_breadth_flow() {
 
     let mut conn = db::open_connection(&layout.database.join("aster.db")).unwrap();
     let schema_v = db::migrate(&mut conn).unwrap();
-    assert_eq!(schema_v, 3, "Schema 版本应迁移至 0003");
+    assert!(
+        schema_v >= 3,
+        "Schema 版本应至少迁移至 0003 (实际: {schema_v})"
+    );
 
     // 1. 11 个宿主工具 Profile 与扫描
     let profiles = host_profile::all_profiles();
@@ -73,7 +74,10 @@ fn test_m3_skills_manager_breadth_flow() {
     .unwrap();
     assert_eq!(group.skills.len(), 3);
     assert_eq!(group.source_type, "github");
-    assert!(group.skills.iter().all(|s| s.snapshot_id.starts_with("1234567890ab-")));
+    assert!(group
+        .skills
+        .iter()
+        .all(|s| s.snapshot_id.starts_with("1234567890ab-")));
     assert!(group.skills.iter().any(|s| s.name == "doc-writer"));
     assert!(group.skills.iter().any(|s| s.name == "code-fixer"));
     assert!(group.skills.iter().any(|s| s.name == "dangerous-skill"));
@@ -81,7 +85,10 @@ fn test_m3_skills_manager_breadth_flow() {
     // 3. 安全扫描拦截与 Quarantine 隔离
     let dangerous_dir = repo_dir.join("skills/dangerous-skill");
     let check_res = skill_flow::static_check(&dangerous_dir);
-    assert!(check_res.is_err(), "包含 .bat 脚本的 Skill 必须被静态检查拦截");
+    assert!(
+        check_res.is_err(),
+        "包含 .bat 脚本的 Skill 必须被静态检查拦截"
+    );
     let findings = check_res.unwrap_err();
 
     let q_rec = skill_flow::quarantine_bad_skill(
@@ -91,8 +98,12 @@ fn test_m3_skills_manager_breadth_flow() {
         &findings,
     )
     .unwrap();
-    assert!(Path::new(&q_rec.quarantine_path).join("manifest.json").is_file());
-    assert!(Path::new(&q_rec.quarantine_path).join("content/script.bat").is_file());
+    assert!(Path::new(&q_rec.quarantine_path)
+        .join("manifest.json")
+        .is_file());
+    assert!(Path::new(&q_rec.quarantine_path)
+        .join("content/script.bat")
+        .is_file());
     assert!(!dangerous_dir.exists(), "原 staging 目录必须被完全移除");
 
     // 4. 不可变快照创建与快照 Diff
@@ -102,7 +113,8 @@ fn test_m3_skills_manager_breadth_flow() {
         skill_path: "skills/doc-writer".into(),
     };
     let doc_writer_dir = repo_dir.join("skills/doc-writer");
-    let snap_v1 = skill_flow::create_snapshot(&layout.skills, &doc_src_v1, &doc_writer_dir).unwrap();
+    let snap_v1 =
+        skill_flow::create_snapshot(&layout.skills, &doc_src_v1, &doc_writer_dir).unwrap();
     skill_flow::record_snapshot(&conn, &doc_src_v1, &snap_v1).unwrap();
 
     // 模拟 v2 版本的改动
@@ -117,14 +129,24 @@ fn test_m3_skills_manager_breadth_flow() {
         commit_sha: "222222222222".into(),
         skill_path: "skills/doc-writer".into(),
     };
-    let snap_v2 = skill_flow::create_snapshot(&layout.skills, &doc_src_v2, &doc_writer_dir).unwrap();
+    let snap_v2 =
+        skill_flow::create_snapshot(&layout.skills, &doc_src_v2, &doc_writer_dir).unwrap();
     skill_flow::record_snapshot(&conn, &doc_src_v2, &snap_v2).unwrap();
 
-    let diff = skill_flow::snapshot_diff(&snap_v1.root_dir, &snap_v2.root_dir, &snap_v1.id, &snap_v2.id).unwrap();
+    let diff = skill_flow::snapshot_diff(
+        &snap_v1.root_dir,
+        &snap_v2.root_dir,
+        &snap_v1.id,
+        &snap_v2.id,
+    )
+    .unwrap();
     assert_eq!(diff.added_files, vec!["template.txt"]);
     assert_eq!(diff.modified_files, vec!["SKILL.md"]);
     assert!(diff.deleted_files.is_empty());
-    assert!(diff.file_diffs.iter().any(|fd| fd.path == "SKILL.md" && fd.status == "modified"));
+    assert!(diff
+        .file_diffs
+        .iter()
+        .any(|fd| fd.path == "SKILL.md" && fd.status == "modified"));
 
     // 5. 中文派生说明（Translations）生命周期
     let tr_doc = TranslationDoc {
@@ -143,11 +165,17 @@ fn test_m3_skills_manager_breadth_flow() {
     skill_flow::save_translation(Some(&conn), &layout.translations, &tr_doc).unwrap();
 
     // 在 v1 快照下读取：非 stale
-    let loaded_v1 = skill_flow::load_translation(&layout.translations, "doc-writer", Some(&snap_v1.id)).unwrap().unwrap();
+    let loaded_v1 =
+        skill_flow::load_translation(&layout.translations, "doc-writer", Some(&snap_v1.id))
+            .unwrap()
+            .unwrap();
     assert!(!loaded_v1.is_stale);
 
     // 在 v2 快照下读取：触发 is_stale: true，但正文完整保留
-    let loaded_v2 = skill_flow::load_translation(&layout.translations, "doc-writer", Some(&snap_v2.id)).unwrap().unwrap();
+    let loaded_v2 =
+        skill_flow::load_translation(&layout.translations, "doc-writer", Some(&snap_v2.id))
+            .unwrap()
+            .unwrap();
     assert!(loaded_v2.is_stale, "快照变更时必须提示说明已过期");
     assert_eq!(loaded_v2.purpose, "用于自动生成与协作编写设计文档");
 
@@ -176,7 +204,10 @@ fn test_m3_skills_manager_breadth_flow() {
 
     // 6.1 构造外部未托管冲突目录
     let unmanaged_dir = managed_root.join("unmanaged-zed-skills/doc-writer");
-    write_file(&unmanaged_dir.join("existing_user_doc.txt"), "Important user files");
+    write_file(
+        &unmanaged_dir.join("existing_user_doc.txt"),
+        "Important user files",
+    );
 
     let target_conflict = DeploymentTarget {
         host: "zed".into(),
@@ -195,12 +226,27 @@ fn test_m3_skills_manager_breadth_flow() {
     assert_eq!(blocked_plan.blocked_targets, 1);
 
     // 7. 合法目标的批量部署（Plan & Apply）与分级 Evidence 记录
-    let valid_targets = [target_pi.clone(), target_cursor.clone(), target_antigravity.clone()];
-    let plan = skill_flow::plan_batch_deployment(&conn, &snap_v2, &valid_targets, std::slice::from_ref(&managed_root));
+    let valid_targets = [
+        target_pi.clone(),
+        target_cursor.clone(),
+        target_antigravity.clone(),
+    ];
+    let plan = skill_flow::plan_batch_deployment(
+        &conn,
+        &snap_v2,
+        &valid_targets,
+        std::slice::from_ref(&managed_root),
+    );
     assert!(plan.can_apply);
     assert_eq!(plan.ready_targets, 3);
 
-    let deploy_res = skill_flow::deploy_batch_planned(&mut conn, &snap_v2, &valid_targets, std::slice::from_ref(&managed_root)).unwrap();
+    let deploy_res = skill_flow::deploy_batch_planned(
+        &mut conn,
+        &snap_v2,
+        &valid_targets,
+        std::slice::from_ref(&managed_root),
+    )
+    .unwrap();
     assert!(deploy_res.success);
     assert_eq!(deploy_res.deployed_count, 3);
     assert!(target_pi.path.join("template.txt").is_file());
@@ -216,8 +262,12 @@ fn test_m3_skills_manager_breadth_flow() {
         profile_version: "cursor-v1".into(),
     };
     let cursor_stages = evidence::latest_by_stage(&conn, &key_cursor).unwrap();
-    assert!(cursor_stages.iter().any(|s| s.stage == Stage::TargetDiscovered && s.status == Status::Success));
-    assert!(cursor_stages.iter().any(|s| s.stage == Stage::SessionLoaded && s.status == Status::Unknown));
+    assert!(cursor_stages
+        .iter()
+        .any(|s| s.stage == Stage::TargetDiscovered && s.status == Status::Success));
+    assert!(cursor_stages
+        .iter()
+        .any(|s| s.stage == Stage::SessionLoaded && s.status == Status::Unknown));
 
     // 9. 补偿回滚测试（Compensating Rollback on Runtime Failure）
     let fail_parent = managed_root.join("blocked_parent_dir");
@@ -237,9 +287,18 @@ fn test_m3_skills_manager_breadth_flow() {
     };
 
     let fail_batch = [target_extra_1.clone(), target_extra_fail];
-    let batch_res = skill_flow::deploy_batch_planned(&mut conn, &snap_v2, &fail_batch, std::slice::from_ref(&managed_root)).unwrap();
+    let batch_res = skill_flow::deploy_batch_planned(
+        &mut conn,
+        &snap_v2,
+        &fail_batch,
+        std::slice::from_ref(&managed_root),
+    )
+    .unwrap();
     assert!(!batch_res.success);
     assert_eq!(batch_res.deployed_count, 0);
-    assert_eq!(batch_res.rolled_back_count, 1, "先前已部署的 kimi-code 必须被补偿回滚");
+    assert_eq!(
+        batch_res.rolled_back_count, 1,
+        "先前已部署的 kimi-code 必须被补偿回滚"
+    );
     assert!(!target_extra_1.path.exists(), "回滚后目标路径不得残留");
 }

@@ -1,6 +1,6 @@
 //! 11 个目标工具 HostProfile 与本地环境扫描器。
 //!
-//! 根据 content.md §8 与 AGENTS.md 约束：
+//! HostProfile 安全边界：
 //! - HostProfile 是版本化、只读、不可执行的数据；
 //! - 包含 Windows 路径模板、作用域（user/project/custom）、发现形态（flat/bundle/recursive）与官方置信度（verified/experimental/scan-only）；
 //! - 运行时行为由内置连接器或文件系统驱动，不从远程动态执行脚本。
@@ -306,12 +306,17 @@ pub fn all_profiles() -> Vec<HostProfile> {
 
 /// 根据 ID 获取单个 HostProfile。
 pub fn get_profile(id: &str) -> Option<HostProfile> {
-    all_profiles().into_iter().find(|p| p.id.eq_ignore_ascii_case(id))
+    all_profiles()
+        .into_iter()
+        .find(|p| p.id.eq_ignore_ascii_case(id))
 }
 
 /// 扩展 Windows 环境变量与 `<project>` 占位符。
 /// 支持环境变量：%USERPROFILE%, %APPDATA%, %LOCALAPPDATA%, %TEMP%, %PROGRAMFILES% 等。
-pub fn expand_path_template(template: &str, project_root: Option<&Path>) -> Result<PathBuf, String> {
+pub fn expand_path_template(
+    template: &str,
+    project_root: Option<&Path>,
+) -> Result<PathBuf, String> {
     let mut resolved = template.to_string();
 
     if resolved.contains("<project>") {
@@ -352,22 +357,31 @@ pub fn expand_path_template(template: &str, project_root: Option<&Path>) -> Resu
                 if let Some(val) = env_map.get(&var_upper) {
                     result.push_str(val);
                 } else if var_upper == "USERPROFILE" || var_upper == "HOME" {
-                    let home = dirs::home_dir().map(|p| p.to_string_lossy().to_string()).unwrap_or_default();
+                    let home = dirs::home_dir()
+                        .map(|p| p.to_string_lossy().to_string())
+                        .unwrap_or_default();
                     result.push_str(&home);
                 } else if var_upper == "APPDATA" {
-                    let roaming = dirs::config_dir().map(|p| p.to_string_lossy().to_string()).unwrap_or_default();
+                    let roaming = dirs::config_dir()
+                        .map(|p| p.to_string_lossy().to_string())
+                        .unwrap_or_default();
                     result.push_str(&roaming);
                 } else if var_upper == "LOCALAPPDATA" {
-                    let local = dirs::data_local_dir().map(|p| p.to_string_lossy().to_string()).unwrap_or_default();
+                    let local = dirs::data_local_dir()
+                        .map(|p| p.to_string_lossy().to_string())
+                        .unwrap_or_default();
                     result.push_str(&local);
                 } else if var_upper == "TEMP" || var_upper == "TMP" {
                     let temp = std::env::temp_dir().to_string_lossy().to_string();
                     result.push_str(&temp);
                 } else if var_upper == "PROGRAMFILES" || var_upper == "PROGRAMW6432" {
-                    let pf = std::env::var("ProgramFiles").unwrap_or_else(|_| r"C:\Program Files".into());
+                    let pf = std::env::var("ProgramFiles")
+                        .unwrap_or_else(|_| r"C:\Program Files".into());
                     result.push_str(&pf);
                 } else {
-                    return Err(format!("unknown environment variable in template: %{var_name}%"));
+                    return Err(format!(
+                        "unknown environment variable in template: %{var_name}%"
+                    ));
                 }
             } else {
                 result.push('%');
@@ -509,7 +523,8 @@ mod tests {
         assert!(err.contains("no project root"));
 
         // 3. 测试 %USERPROFILE% 或 %APPDATA%
-        let user_expanded = expand_path_template("%USERPROFILE%\\.gemini\\antigravity\\skills", None).unwrap();
+        let user_expanded =
+            expand_path_template("%USERPROFILE%\\.gemini\\antigravity\\skills", None).unwrap();
         assert!(!user_expanded.to_string_lossy().contains("%USERPROFILE%"));
         assert!(user_expanded.to_string_lossy().contains("antigravity"));
 

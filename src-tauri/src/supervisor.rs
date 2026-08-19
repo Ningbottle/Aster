@@ -1,4 +1,4 @@
-//! Windows 进程监管基础（content.md §5/§12）。
+//! Windows 进程监管基础。
 //!
 //! M0 覆盖：以普通用户权限启动子进程、查询状态、等待退出、终止进程树，
 //! 并区分退出原因。输出捕获与完整取消状态机属于 M1/M2 的连接器职责。
@@ -132,12 +132,19 @@ impl ChildProcess {
 pub fn is_safe_version(v: &str) -> bool {
     !v.is_empty()
         && v.len() <= 64
-        && v.chars().all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-')
-        && v.chars().next().map(|c| c.is_ascii_digit()).unwrap_or(false)
+        && v.chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-')
+        && v.chars()
+            .next()
+            .map(|c| c.is_ascii_digit())
+            .unwrap_or(false)
 }
 
 /// 按终止整个进程树（taskkill /T /F）。供连接器在只有 pid 时使用。
 pub fn kill_process_tree(pid: u32) -> io::Result<()> {
+    // taskkill 是一个真实子进程，`.status()` 会阻塞调用线程直到它退出。
+    // 退出清理在主线程上调用本函数，所以这段耗时直接计入“关不掉”的时间。
+    let _span = crate::diag::span("taskkill", format!("pid={pid}"));
     let status = Command::new("taskkill")
         .args(["/PID", &pid.to_string(), "/T", "/F"])
         .stdin(Stdio::null())
@@ -191,7 +198,10 @@ mod tests {
         let kind = child.stop_tree().unwrap();
         assert_eq!(kind, ExitKind::TerminatedByAster);
         assert!(child.stop_requested());
-        assert!(started.elapsed() < Duration::from_secs(4), "取消不应等待自然退出");
+        assert!(
+            started.elapsed() < Duration::from_secs(4),
+            "取消不应等待自然退出"
+        );
     }
 
     #[test]

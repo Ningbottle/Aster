@@ -4,7 +4,7 @@
 //! 危险文件安全隔离（Quarantine）、快照 Diff 查看、多目标批量部署计划（Plan & Apply）
 //! 以及部分失败事务补偿回滚。
 //!
-//! 核心安全约束（AGENTS.md）：
+//! 核心安全约束：
 //! - 绝不执行下载内容中的任何脚本或二进制；
 //! - 默认复制文件，不默认建立 symlink/junction；
 //! - 绝不覆盖未托管目录；托管目录被外部修改后停止写入；
@@ -22,22 +22,23 @@ use std::io::{self, Read};
 use std::path::{Component, Path, PathBuf};
 
 /// M1 纵切锁定的真实 GitHub Skill 来源（anthropics/skills，纯 Markdown）。
-pub static M1_SKILL_SOURCE: std::sync::LazyLock<SkillSource> = std::sync::LazyLock::new(|| {
-    SkillSource {
+pub static M1_SKILL_SOURCE: std::sync::LazyLock<SkillSource> =
+    std::sync::LazyLock::new(|| SkillSource {
         repo: "anthropics/skills".into(),
         commit_sha: "00756142ab04c82a447693cf373c4e0c554d1005".into(),
         skill_path: "skills/doc-coauthoring".into(),
-    }
-});
+    });
 
 /// 静态检查允许的文件扩展名（小写，不含点）。
-const ALLOWED_EXTENSIONS: &[&str] = &["md", "txt", "json", "yaml", "yml", "png", "jpg", "jpeg", "gif", "svg"];
+const ALLOWED_EXTENSIONS: &[&str] = &[
+    "md", "txt", "json", "yaml", "yml", "png", "jpg", "jpeg", "gif", "svg",
+];
 const MAX_FILES: usize = 200;
 const MAX_TOTAL_BYTES: u64 = 20 * 1024 * 1024;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SkillSource {
-    pub repo: String,      // 如 "anthropics/skills" 或本地路径
+    pub repo: String,       // 如 "anthropics/skills" 或本地路径
     pub commit_sha: String, // 锁定的 commit 或 "local"
     pub skill_path: String, // 仓库内相对路径，如 "skills/doc-coauthoring"
 }
@@ -207,7 +208,10 @@ pub fn download_and_extract(source: &SkillSource, staging_root: &Path) -> Result
         .read_to_end(&mut bytes)
         .map_err(|e| format!("reading tarball: {e}"))?;
 
-    let staging_dir = staging_root.join(format!("extract-{}", source.commit_sha.chars().take(12).collect::<String>()));
+    let staging_dir = staging_root.join(format!(
+        "extract-{}",
+        source.commit_sha.chars().take(12).collect::<String>()
+    ));
     if staging_dir.exists() {
         fs::remove_dir_all(&staging_dir).map_err(|e| e.to_string())?;
     }
@@ -277,6 +281,260 @@ pub fn download_and_extract(source: &SkillSource, staging_root: &Path) -> Result
     Ok(skill_dir)
 }
 
+/// 把用户给定的 Git ref（分支名、tag、短 sha）解析为真实 commit sha。
+///
+/// 快照 id 与记录必须使用真实 commit sha：分支名或 "HEAD" 是可移动指针，
+/// 直接用作版本段会让同一仓库的重扫永远得到相同快照 id，历史链与 Diff
+/// 结构性不可能形成（2026-08-18 GitHub 路径修复，与本地扫描的 "local"
+/// 版本段缺陷同类）。已是 40 位十六进制 sha 时直接返回，不做网络请求。
+pub fn resolve_github_ref(
+    repo: &str,
+    git_ref: Option<&str>,
+    token: Option<&str>,
+) -> Result<String, String> {
+    let clean_repo = repo.trim().trim_matches('/');
+    if clean_repo.is_empty() || !clean_repo.contains('/') {
+        return Err(format!(
+            "invalid GitHub repository identifier: '{repo}', expected 'owner/repo'"
+        ));
+    }
+    let target_ref = git_ref.unwrap_or("HEAD").trim();
+    let target_ref = if target_ref.is_empty() {
+        "HEAD"
+    } else {
+        target_ref
+    };
+    if target_ref.len() == 40 && target_ref.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Ok(target_ref.to_ascii_lowercase());
+    }
+
+    let api_url = format!("https://api.github.com/repos/{clean_repo}/commits/{target_ref}");
+    let agent = ureq::AgentBuilder::new()
+        .timeout_connect(std::time::Duration::from_secs(15))
+        .timeout_read(std::time::Duration::from_secs(30))
+        .build();
+    let mut req = agent
+        .get(&api_url)
+        .set("User-Agent", "Aster-Desktop")
+        .set("Accept", "application/vnd.github.v3+json");
+    if let Some(tok) = token.filter(|t| !t.trim().is_empty()) {
+        req = req.set("Authorization", &format!("Bearer {tok}"));
+    }
+    let resp = req.call().map_err(|e| match e {
+        ureq::Error::Status(404, _) => {
+            format!("GitHub 仓库或引用未找到 (404): {clean_repo}@{target_ref}")
+        }
+        ureq::Error::Status(401, _) => "GitHub 令牌无效或未授权 (401)，请重新连接".into(),
+        ureq::Error::Status(403, _) => "GitHub API 访问被拒绝或触达频率限制 (403)".into(),
+        other => format!("GitHub 解析引用失败 {clean_repo}@{target_ref}: {other}"),
+    })?;
+    let text = resp
+        .into_string()
+        .map_err(|e| format!("read ref response: {e}"))?;
+    let json: serde_json::Value =
+        serde_json::from_str(&text).map_err(|e| format!("parse ref response: {e}"))?;
+    let sha = json
+        .get("sha")
+        .and_then(|v| v.as_str())
+        .filter(|s| s.len() == 40 && s.chars().all(|c| c.is_ascii_hexdigit()))
+        .ok_or_else(|| {
+            format!("GitHub ref response missing commit sha for {clean_repo}@{target_ref}")
+        })?;
+    Ok(sha.to_ascii_lowercase())
+}
+
+/// 从 GitHub 安全下载完整仓库并解压到 staging 隔离区。
+pub fn download_and_extract_github_repo(
+    repo: &str,
+    git_ref: Option<&str>,
+    token: Option<&str>,
+    staging_root: &Path,
+) -> Result<PathBuf, String> {
+    let clean_repo = repo.trim().trim_matches('/');
+    if clean_repo.is_empty() || !clean_repo.contains('/') {
+        return Err(format!(
+            "invalid GitHub repository identifier: '{repo}', expected 'owner/repo'"
+        ));
+    }
+    let target_ref = git_ref.unwrap_or("HEAD").trim();
+    let target_ref = if target_ref.is_empty() {
+        "HEAD"
+    } else {
+        target_ref
+    };
+    let sanitized_repo = clean_repo.replace('/', "-");
+    let sanitized_ref = target_ref.replace(['/', '\\', ':', ' '], "-");
+
+    let staging_dir = staging_root.join(format!("gh-{}-{}", sanitized_repo, sanitized_ref));
+    if staging_dir.exists() {
+        let _ = fs::remove_dir_all(&staging_dir);
+    }
+    fs::create_dir_all(&staging_dir).map_err(|e| format!("create staging dir: {e}"))?;
+
+    let agent = ureq::AgentBuilder::new()
+        .timeout_connect(std::time::Duration::from_secs(30))
+        .timeout_read(std::time::Duration::from_secs(90))
+        .timeout_write(std::time::Duration::from_secs(90))
+        .build();
+
+    let resp = if let Some(tok) = token.filter(|t| !t.trim().is_empty()) {
+        let api_url = format!("https://api.github.com/repos/{clean_repo}/tarball/{target_ref}");
+        agent
+            .get(&api_url)
+            .set("Authorization", &format!("Bearer {tok}"))
+            .set("User-Agent", "Aster-Desktop")
+            .set("Accept", "application/vnd.github.v3+json")
+            .call()
+            .map_err(|e| match e {
+                ureq::Error::Status(404, _) => {
+                    format!("GitHub 仓库或分支未找到 (404): {clean_repo}@{target_ref}")
+                }
+                ureq::Error::Status(401, _) => "GitHub 令牌无效或未授权 (401)，请重新连接".into(),
+                ureq::Error::Status(403, _) => "GitHub API 访问被拒绝或触达频率限制 (403)".into(),
+                other => format!("GitHub 下载失败: {other}"),
+            })?
+    } else {
+        let codeload_url = format!("https://codeload.github.com/{clean_repo}/tar.gz/{target_ref}");
+        agent
+            .get(&codeload_url)
+            .set("User-Agent", "Aster-Desktop")
+            .call()
+            .map_err(|e| match e {
+                ureq::Error::Status(404, _) => {
+                    format!("GitHub 仓库或分支未找到 (404): {clean_repo}@{target_ref}")
+                }
+                ureq::Error::Status(429, _) => {
+                    "GitHub 请求受限 (429)，请稍后重试或配置 GitHub 令牌".into()
+                }
+                other => format!("GitHub 下载失败: {other}"),
+            })?
+    };
+
+    let mut bytes = Vec::new();
+    resp.into_reader()
+        .take(200 * 1024 * 1024)
+        .read_to_end(&mut bytes)
+        .map_err(|e| format!("reading tarball: {e}"))?;
+
+    let gz = flate2::read::GzDecoder::new(&bytes[..]);
+    let mut archive = tar::Archive::new(gz);
+
+    for entry in archive
+        .entries()
+        .map_err(|e| format!("reading archive entries: {e}"))?
+    {
+        let mut entry = entry.map_err(|e| format!("entry error: {e}"))?;
+        let full_path = entry
+            .path()
+            .map_err(|e| e.to_string())?
+            .to_string_lossy()
+            .replace('\\', "/");
+
+        let path_in_repo = match full_path.split_once('/') {
+            Some((_top, rest)) => rest,
+            None => continue,
+        };
+        if path_in_repo.is_empty() {
+            continue;
+        }
+
+        let rel_path = Path::new(path_in_repo);
+        for comp in rel_path.components() {
+            match comp {
+                Component::ParentDir | Component::CurDir => {
+                    return Err(format!("archive entry escapes target: {full_path}"))
+                }
+                Component::Prefix(_) | Component::RootDir => {
+                    return Err(format!("archive entry is absolute: {full_path}"))
+                }
+                _ => {}
+            }
+        }
+        if entry.link_name().map(|l| l.is_some()).unwrap_or(true) {
+            return Err(format!("archive entry is a link, not allowed: {full_path}"));
+        }
+
+        let target = staging_dir.join(rel_path);
+        if entry.header().entry_type().is_dir() {
+            fs::create_dir_all(&target).map_err(|e| e.to_string())?;
+        } else {
+            if let Some(parent) = target.parent() {
+                fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+            }
+            let mut file = fs::File::create(&target).map_err(|e| e.to_string())?;
+            io::copy(&mut entry, &mut file).map_err(|e| e.to_string())?;
+        }
+    }
+
+    Ok(staging_dir)
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QuarantineItemDto {
+    pub id: i64,
+    pub quarantine_id: String,
+    pub source_info: String,
+    pub reason: String,
+    pub quarantined_at: String,
+    pub quarantine_path: String,
+    pub total_findings: usize,
+    pub findings: Vec<StaticCheckFinding>,
+}
+
+pub fn list_quarantine_items(
+    conn: &rusqlite::Connection,
+    quarantine_root: &Path,
+) -> Result<Vec<QuarantineItemDto>, String> {
+    let records = crate::db::list_quarantine_records(conn).map_err(|e| e.to_string())?;
+    let mut items = Vec::new();
+    for r in records {
+        let manifest_file = quarantine_root.join(&r.quarantine_id).join("manifest.json");
+        let mut total_findings = 0;
+        let mut findings = Vec::new();
+        if manifest_file.is_file() {
+            if let Ok(content) = fs::read_to_string(&manifest_file) {
+                if let Ok(val) = serde_json::from_str::<serde_json::Value>(&content) {
+                    total_findings = val
+                        .get("total_findings")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0) as usize;
+                    if let Some(f_arr) = val.get("findings").and_then(|v| v.as_array()) {
+                        if let Ok(parsed) =
+                            serde_json::from_value(serde_json::Value::Array(f_arr.clone()))
+                        {
+                            findings = parsed;
+                        }
+                    }
+                }
+            }
+        }
+        items.push(QuarantineItemDto {
+            id: r.id,
+            quarantine_id: r.quarantine_id,
+            source_info: r.source_info,
+            reason: r.reason,
+            quarantined_at: r.quarantined_at,
+            quarantine_path: r.quarantine_path,
+            total_findings,
+            findings,
+        });
+    }
+    Ok(items)
+}
+
+pub fn delete_quarantine_item(
+    conn: &rusqlite::Connection,
+    quarantine_root: &Path,
+    quarantine_id: &str,
+) -> Result<(), String> {
+    let target_dir = quarantine_root.join(quarantine_id);
+    if target_dir.exists() {
+        let _ = fs::remove_dir_all(&target_dir);
+    }
+    crate::db::delete_quarantine_record(conn, quarantine_id).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 /// 扫描多 Skill 仓库或本地目录，解析所有独立 Skill 并结构化分组。
 pub fn scan_multi_skill_repo(
     repo_root: &Path,
@@ -286,7 +544,10 @@ pub fn scan_multi_skill_repo(
     skills_root: Option<&Path>,
 ) -> Result<SkillRepoGroup, String> {
     if !repo_root.is_dir() {
-        return Err(format!("repo root {} is not a directory", repo_root.display()));
+        return Err(format!(
+            "repo root {} is not a directory",
+            repo_root.display()
+        ));
     }
 
     let mut discovered_skills = Vec::new();
@@ -353,12 +614,21 @@ pub fn scan_multi_skill_repo(
         let has_translation = translations_root
             .map(|tr| tr.join(format!("{name}.md")).is_file())
             .unwrap_or(false);
-        let snapshot_id = format!("{}-{}", &commit_or_version[..12.min(commit_or_version.len())], name);
+        // 版本段决定快照 id：GitHub 来源用真实 commit 前缀（有诊断价值）；本地扫描
+        // 没有 commit 概念，用内容哈希前 12 位——同一 Skill 内容变化后重扫必须产生
+        // 新快照 id，否则历史快照链与 Diff 永远不可能形成（2026-08-18 修复）。
+        let version_seg: String = if commit_or_version == "local" {
+            let hex = content_sha.strip_prefix("sha256:").unwrap_or(&content_sha);
+            hex[..12.min(hex.len())].to_string()
+        } else {
+            commit_or_version[..12.min(commit_or_version.len())].to_string()
+        };
+        let snapshot_id = format!("{}-{}", version_seg, name);
 
         if let Some(sr) = skills_root {
             let src = SkillSource {
                 repo: repo_name.to_string(),
-                commit_sha: commit_or_version.to_string(),
+                commit_sha: version_seg.clone(),
                 skill_path: rel.clone(),
             };
             let _ = create_snapshot(sr, &src, &path);
@@ -375,7 +645,11 @@ pub fn scan_multi_skill_repo(
         });
     }
 
-    let source_type = if repo_name.contains('/') && !repo_name.contains('\\') && !repo_name.contains(':') && commit_or_version != "local" {
+    let source_type = if repo_name.contains('/')
+        && !repo_name.contains('\\')
+        && !repo_name.contains(':')
+        && commit_or_version != "local"
+    {
         "github".to_string()
     } else {
         "local".to_string()
@@ -499,7 +773,23 @@ pub fn static_check(root: &Path) -> Result<Vec<String>, Vec<StaticCheckFinding>>
             .unwrap_or_default();
         if matches!(
             ext.as_str(),
-            "exe" | "bat" | "cmd" | "ps1" | "sh" | "js" | "mjs" | "cjs" | "py" | "pl" | "rb" | "dll" | "com" | "scr" | "vbs" | "wsf" | "msi"
+            "exe"
+                | "bat"
+                | "cmd"
+                | "ps1"
+                | "sh"
+                | "js"
+                | "mjs"
+                | "cjs"
+                | "py"
+                | "pl"
+                | "rb"
+                | "dll"
+                | "com"
+                | "scr"
+                | "vbs"
+                | "wsf"
+                | "msi"
         ) {
             findings.push(StaticCheckFinding {
                 relative_path: rel.clone(),
@@ -552,8 +842,7 @@ pub fn quarantine_bad_skill(
     findings: &[StaticCheckFinding],
 ) -> Result<QuarantineRecord, String> {
     let now = Utc::now();
-    let sanitized_source = source_info
-        .replace(['/', '\\', ':', '*', '?', '"', '<', '>', '|'], "-");
+    let sanitized_source = source_info.replace(['/', '\\', ':', '*', '?', '"', '<', '>', '|'], "-");
     let quarantine_id = format!("quarantine-{}-{}", now.timestamp_millis(), sanitized_source);
     let target_dir = quarantine_root.join(&quarantine_id);
     let content_dir = target_dir.join("content");
@@ -648,7 +937,11 @@ pub fn create_snapshot(
         .map(|s| s.to_string_lossy().to_string())
         .unwrap_or_else(|| "skill".into());
     let content_sha = content_hash(extracted_root)?;
-    let id = format!("{}-{}", &source.commit_sha[..12.min(source.commit_sha.len())], skill_name);
+    let id = format!(
+        "{}-{}",
+        &source.commit_sha[..12.min(source.commit_sha.len())],
+        skill_name
+    );
     let snap_root = skills_root.join("snapshots").join(&id);
     if snap_root.exists() {
         let existing_sha = content_hash(&snap_root)?;
@@ -679,7 +972,11 @@ pub fn create_snapshot(
     })
 }
 
-pub fn record_snapshot(conn: &Connection, source: &SkillSource, snap: &Snapshot) -> rusqlite::Result<()> {
+pub fn record_snapshot(
+    conn: &Connection,
+    source: &SkillSource,
+    snap: &Snapshot,
+) -> rusqlite::Result<()> {
     conn.execute(
         "INSERT OR IGNORE INTO skill_snapshot (id, source_repo, commit_sha, skill_path, skill_name, root_dir, file_count, content_sha, created_at)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
@@ -975,7 +1272,9 @@ fn is_within(target: &Path, root: &Path) -> bool {
     let r: Vec<_> = root.components().collect();
     t.len() > r.len()
         && t.iter().zip(r.iter()).all(|(a, b)| {
-            a.as_os_str().to_string_lossy().eq_ignore_ascii_case(&b.as_os_str().to_string_lossy())
+            a.as_os_str()
+                .to_string_lossy()
+                .eq_ignore_ascii_case(&b.as_os_str().to_string_lossy())
         })
 }
 
@@ -996,7 +1295,11 @@ pub fn deploy(
             managed_root.display()
         ));
     }
-    if target.path.exists() && fs::read_dir(&target.path).map(|d| d.count() > 0).unwrap_or(false) {
+    if target.path.exists()
+        && fs::read_dir(&target.path)
+            .map(|d| d.count() > 0)
+            .unwrap_or(false)
+    {
         let last_deploy: Result<(i64, String), _> = conn.query_row(
             "SELECT id, snapshot_id FROM skill_deployment
              WHERE target_path = ?1 AND state = 'deployed'
@@ -1016,7 +1319,7 @@ pub fn deploy(
                     let current_disk_sha = content_hash(&target.path).map_err(|e| e.to_string())?;
                     if current_disk_sha != recorded_sha {
                         return Err(format!(
-                            "target directory {} was modified externally (expected snapshot sha: {}, current disk sha: {}); refusing to overwrite per AGENTS.md rules",
+                            "target directory {} was modified externally (expected snapshot sha: {}, current disk sha: {}); refusing to overwrite an Aster-managed deployment",
                             target.path.display(),
                             &recorded_sha[..recorded_sha.len().min(12)],
                             &current_disk_sha[..current_disk_sha.len().min(12)],
@@ -1096,9 +1399,11 @@ pub fn resolve_deployment_targets(
                     .iter()
                     .find(|h| h.profile.id.eq_ignore_ascii_case(&t.host))
                 {
-                    if let Some(scope_info) = host_info.discovered_scopes.iter().find(|s| {
-                        s.kind.as_str().eq_ignore_ascii_case(&scope_kind_str)
-                    }) {
+                    if let Some(scope_info) = host_info
+                        .discovered_scopes
+                        .iter()
+                        .find(|s| s.kind.as_str().eq_ignore_ascii_case(&scope_kind_str))
+                    {
                         if scope_info.exists && !scope_info.resolved_path.starts_with("<error:") {
                             let base_p = PathBuf::from(&scope_info.resolved_path);
                             target.path = base_p.join(skill_name);
@@ -1143,7 +1448,9 @@ pub fn plan_batch_deployment(
 
         // 检查是否包含在任一允许的管理根目录内
         let is_managed = managed_roots.iter().any(|root| {
-            if let (Ok(t_abs), Ok(r_abs)) = (std::path::absolute(&target.path), std::path::absolute(root)) {
+            if let (Ok(t_abs), Ok(r_abs)) =
+                (std::path::absolute(&target.path), std::path::absolute(root))
+            {
                 is_within(&t_abs, &r_abs)
             } else {
                 false
@@ -1165,7 +1472,11 @@ pub fn plan_batch_deployment(
         }
 
         // 检查目录当前占用状态与外部篡改
-        if target.path.exists() && fs::read_dir(&target.path).map(|d| d.count() > 0).unwrap_or(false) {
+        if target.path.exists()
+            && fs::read_dir(&target.path)
+                .map(|d| d.count() > 0)
+                .unwrap_or(false)
+        {
             let last_deploy: Result<(i64, String), _> = conn.query_row(
                 "SELECT id, snapshot_id FROM skill_deployment WHERE target_path = ?1 AND state = 'deployed' ORDER BY id DESC LIMIT 1",
                 [&target_str],
@@ -1197,7 +1508,10 @@ pub fn plan_batch_deployment(
                             scope_kind: target.scope.clone(),
                             target_path: target_str,
                             status: PlanItemStatus::BlockedUnmanagedConflict,
-                            reason: Some("托管目录已被外部修改，根据 AGENTS.md 规则停止自动写入并展示差异".into()),
+                            reason: Some(
+                                "托管目录已被外部修改；为保护 Aster 管理的部署，停止自动写入并展示差异"
+                                    .into(),
+                            ),
                         });
                         blocked_count += 1;
                     } else {
@@ -1208,7 +1522,9 @@ pub fn plan_batch_deployment(
                             scope_kind: target.scope.clone(),
                             target_path: target_str,
                             status: PlanItemStatus::AlreadyDeployedByAster,
-                            reason: Some("已存在 Aster 管理的历史部署（内容与快照一致），可安全更新".into()),
+                            reason: Some(
+                                "已存在 Aster 管理的历史部署（内容与快照一致），可安全更新".into(),
+                            ),
                         });
                         ready_count += 1;
                     }
@@ -1221,7 +1537,9 @@ pub fn plan_batch_deployment(
                         scope_kind: target.scope.clone(),
                         target_path: target_str,
                         status: PlanItemStatus::BlockedUnmanagedConflict,
-                        reason: Some("目标目录已存在非 Aster 管理的现有文件，拒绝覆盖未托管内容".into()),
+                        reason: Some(
+                            "目标目录已存在非 Aster 管理的现有文件，拒绝覆盖未托管内容".into(),
+                        ),
                     });
                     blocked_count += 1;
                 }
@@ -1280,7 +1598,9 @@ pub fn deploy_batch_planned(
         let managed_root = managed_roots
             .iter()
             .find(|root| {
-                let (Ok(t_abs), Ok(r_abs)) = (std::path::absolute(&target.path), std::path::absolute(root)) else {
+                let (Ok(t_abs), Ok(r_abs)) =
+                    (std::path::absolute(&target.path), std::path::absolute(root))
+                else {
                     return false;
                 };
                 is_within(&t_abs, &r_abs)
@@ -1383,6 +1703,22 @@ pub fn rollback(conn: &Connection, deployment_id: i64, target_path: &Path) -> Re
         return Err("recorded target path mismatch; refusing to roll back".into());
     }
     if target_path.exists() {
+        // 安全不变量：托管目录被外部修改后不得静默删除——回滚是整目录
+        // 删除，比写入更危险。与部署时快照哈希比对，不一致即拒绝并等待用户决定。
+        let snap_sha: String = conn
+            .query_row(
+                "SELECT s.content_sha FROM skill_deployment d JOIN skill_snapshot s ON s.id = d.snapshot_id WHERE d.id = ?1",
+                [deployment_id],
+                |row| row.get(0),
+            )
+            .map_err(|e| format!("cannot resolve snapshot hash for deployment {deployment_id}: {e}"))?;
+        let current_sha =
+            content_hash(target_path).map_err(|e| format!("cannot hash rollback target: {e}"))?;
+        if current_sha != snap_sha {
+            return Err(format!(
+                "refusing to roll back deployment {deployment_id}: target directory content differs from the deployed snapshot (external modification detected); resolve or remove it manually"
+            ));
+        }
         fs::remove_dir_all(target_path).map_err(|e| e.to_string())?;
     }
     conn.execute(
@@ -1393,7 +1729,10 @@ pub fn rollback(conn: &Connection, deployment_id: i64, target_path: &Path) -> Re
     Ok(())
 }
 
-pub fn active_deployments_for_host(conn: &Connection, host: &str) -> rusqlite::Result<Vec<(i64, String, String, String)>> {
+pub fn active_deployments_for_host(
+    conn: &Connection,
+    host: &str,
+) -> rusqlite::Result<Vec<(i64, String, String, String)>> {
     let mut stmt = conn.prepare(
         "SELECT id, target_host, host_version, target_path FROM skill_deployment
          WHERE target_host = ?1 AND state = 'deployed' ORDER BY id",
@@ -1408,7 +1747,6 @@ pub fn active_deployments_for_host(conn: &Connection, host: &str) -> rusqlite::R
     })?;
     rows.collect()
 }
-
 
 /// 证据键的 profile_version：Pi 走 RPC 连接器契约（pi-rpc-v1，对应 M1 fixture），
 /// 其他宿主按 profile 驱动的文件级部署计。写入与查询必须使用同一映射。
@@ -1473,7 +1811,10 @@ fn copy_tree(src: &Path, dst: &Path) -> io::Result<()> {
         } else if ft.is_symlink() {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
-                format!("symlink encountered during copy: {}", entry.path().display()),
+                format!(
+                    "symlink encountered during copy: {}",
+                    entry.path().display()
+                ),
             ));
         } else {
             fs::copy(entry.path(), target)?;
@@ -1512,20 +1853,65 @@ mod tests {
         write_skill(
             &repo_root,
             "skills/doc-coauthoring",
-            &[("SKILL.md", "---\nname: doc-coauthoring\ndescription: Co-author documentation\n---\n# Doc")],
+            &[(
+                "SKILL.md",
+                "---\nname: doc-coauthoring\ndescription: Co-author documentation\n---\n# Doc",
+            )],
         );
         write_skill(
             &repo_root,
             "skills/code-review",
-            &[("SKILL.md", "---\nname: code-review\ndescription: Review pull requests\n---\n# Review")],
+            &[(
+                "SKILL.md",
+                "---\nname: code-review\ndescription: Review pull requests\n---\n# Review",
+            )],
         );
 
-        let group = scan_multi_skill_repo(&repo_root, "anthropics/skills", "main", None, None).unwrap();
+        let group =
+            scan_multi_skill_repo(&repo_root, "anthropics/skills", "main", None, None).unwrap();
         assert_eq!(group.repo_name, "anthropics/skills");
         assert_eq!(group.skills.len(), 2);
         assert!(group.skills.iter().any(|s| s.name == "doc-coauthoring"));
         assert!(group.skills.iter().any(|s| s.name == "code-review"));
-        assert!(group.skills.iter().all(|s| s.snapshot_id.starts_with("main-")));
+        assert!(group
+            .skills
+            .iter()
+            .all(|s| s.snapshot_id.starts_with("main-")));
+    }
+
+    #[test]
+    fn local_rescan_after_content_change_produces_new_snapshot() {
+        // 本地扫描没有 commit 概念：快照版本段必须随内容哈希变化，
+        // 否则同名 Skill 重扫永远是同一快照 id，历史链与 Diff 无法形成。
+        let tmp = tempfile::tempdir().unwrap();
+        let repo_root = tmp.path().join("repo");
+        write_skill(&repo_root, "demo-skill", &[("SKILL.md", "# v1")]);
+        let g1 = scan_multi_skill_repo(&repo_root, "local-repo", "local", None, Some(tmp.path()))
+            .unwrap();
+        let id_v1 = g1.skills[0].snapshot_id.clone();
+
+        write_skill(&repo_root, "demo-skill", &[("SKILL.md", "# v2 changed")]);
+        let g2 = scan_multi_skill_repo(&repo_root, "local-repo", "local", None, Some(tmp.path()))
+            .unwrap();
+        let id_v2 = g2.skills[0].snapshot_id.clone();
+
+        assert_ne!(id_v1, id_v2, "内容变化后本地快照 id 必须变化");
+        assert!(id_v1.ends_with("-demo-skill") && id_v2.ends_with("-demo-skill"));
+        // 内容不变重扫：快照 id 必须稳定（幂等）。
+        let g3 = scan_multi_skill_repo(&repo_root, "local-repo", "local", None, Some(tmp.path()))
+            .unwrap();
+        assert_eq!(g3.skills[0].snapshot_id, id_v2);
+    }
+
+    #[test]
+    fn resolve_github_ref_passthrough_full_sha_and_rejects_bad_repo() {
+        // 40 位十六进制 sha 直接返回（小写化），不触发网络请求。
+        let sha = "0123456789abcdef0123456789ABCDEF01234567";
+        let got = resolve_github_ref("owner/repo", Some(sha), None).unwrap();
+        assert_eq!(got, sha.to_ascii_lowercase());
+        // 非法仓库标识（缺少 owner/ 前缀）必须在发网络请求前就报错。
+        assert!(resolve_github_ref("noslash", Some("HEAD"), None).is_err());
+        assert!(resolve_github_ref("  ", None, None).is_err());
     }
 
     #[test]
@@ -1537,19 +1923,30 @@ mod tests {
         fs::create_dir_all(&quarantine).unwrap();
 
         let bad_skill = staging.join("malicious-skill");
-        write_skill(&staging, "malicious-skill", &[
-            ("SKILL.md", "Dangerous"),
-            ("payload.exe", "fake-binary"),
-            ("script.bat", "@echo off"),
-        ]);
+        write_skill(
+            &staging,
+            "malicious-skill",
+            &[
+                ("SKILL.md", "Dangerous"),
+                ("payload.exe", "fake-binary"),
+                ("script.bat", "@echo off"),
+            ],
+        );
 
         let check_res = static_check(&bad_skill);
         assert!(check_res.is_err(), "静态检查必须拦截可执行/批处理文件");
         let findings = check_res.unwrap_err();
 
-        let q_record = quarantine_bad_skill(&quarantine, "bad-author/bad-repo", &bad_skill, &findings).unwrap();
-        assert!(Path::new(&q_record.quarantine_path).join("manifest.json").is_file());
-        assert!(Path::new(&q_record.quarantine_path).join("content").join("payload.exe").is_file());
+        let q_record =
+            quarantine_bad_skill(&quarantine, "bad-author/bad-repo", &bad_skill, &findings)
+                .unwrap();
+        assert!(Path::new(&q_record.quarantine_path)
+            .join("manifest.json")
+            .is_file());
+        assert!(Path::new(&q_record.quarantine_path)
+            .join("content")
+            .join("payload.exe")
+            .is_file());
         assert!(!bad_skill.exists(), "隔离后 staging 临时目录必须被完全清理");
     }
 
@@ -1558,22 +1955,92 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let v1_dir = tmp.path().join("v1");
         let v2_dir = tmp.path().join("v2");
-        write_skill(tmp.path(), "v1", &[
-            ("SKILL.md", "line1\nline2\n"),
-            ("removed.txt", "bye"),
-            ("same.txt", "identical"),
-        ]);
-        write_skill(tmp.path(), "v2", &[
-            ("SKILL.md", "line1\nline2-modified\n"),
-            ("added.txt", "hello"),
-            ("same.txt", "identical"),
-        ]);
+        write_skill(
+            tmp.path(),
+            "v1",
+            &[
+                ("SKILL.md", "line1\nline2\n"),
+                ("removed.txt", "bye"),
+                ("same.txt", "identical"),
+            ],
+        );
+        write_skill(
+            tmp.path(),
+            "v2",
+            &[
+                ("SKILL.md", "line1\nline2-modified\n"),
+                ("added.txt", "hello"),
+                ("same.txt", "identical"),
+            ],
+        );
 
         let diff = snapshot_diff(&v1_dir, &v2_dir, "v1", "v2").unwrap();
         assert_eq!(diff.added_files, vec!["added.txt"]);
         assert_eq!(diff.deleted_files, vec!["removed.txt"]);
         assert_eq!(diff.modified_files, vec!["SKILL.md"]);
         assert_eq!(diff.identical_files, vec!["same.txt"]);
+    }
+
+    // 回归防护：2026-08-18 审计中 R1 的 Diff 面板曾卡“计算中”（旧 release 二进制，
+    // 当前代码未复现）。snapshot_diff 是纯文件 I/O，这里锁定两类病态输入的行为：
+    // 缺失目录不报错、大目录在秒级完成。
+    #[test]
+    fn snapshot_diff_handles_missing_dirs_and_large_trees() {
+        let tmp = tempfile::tempdir().unwrap();
+        let missing_base = tmp.path().join("missing-base");
+        let head = tmp.path().join("head");
+
+        let owned: Vec<(String, String)> = (0..500)
+            .map(|i| {
+                (
+                    format!("dir{}/file{}.txt", i % 20, i),
+                    format!("content-{i}"),
+                )
+            })
+            .collect();
+        let refs: Vec<(&str, &str)> = owned
+            .iter()
+            .map(|(a, b)| (a.as_str(), b.as_str()))
+            .collect();
+        write_skill(tmp.path(), "head", &refs);
+
+        let started = std::time::Instant::now();
+        let diff = snapshot_diff(&missing_base, &head, "missing", "head").unwrap();
+        // base 不存在：所有 head 文件计为新增，不得报错。
+        assert_eq!(diff.added_files.len(), 500);
+        assert!(diff.deleted_files.is_empty());
+        assert!(diff.modified_files.is_empty());
+        assert!(
+            started.elapsed().as_secs() < 10,
+            "500 文件的 diff 必须在秒级完成，实测 {:?}",
+            started.elapsed()
+        );
+    }
+
+    #[test]
+    fn snapshot_diff_truncates_oversized_line_diffs() {
+        let tmp = tempfile::tempdir().unwrap();
+        let big_a = (0..2000)
+            .map(|i| format!("old-{i}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let big_b = (0..2000)
+            .map(|i| format!("new-{i}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        write_skill(tmp.path(), "a", &[("big.md", big_a.as_str())]);
+        write_skill(tmp.path(), "b", &[("big.md", big_b.as_str())]);
+
+        let diff = snapshot_diff(&tmp.path().join("a"), &tmp.path().join("b"), "a", "b").unwrap();
+        let detail = diff.file_diffs.iter().find(|d| d.path == "big.md").unwrap();
+        // 超过 1000 行必须截断，防止巨大响应拖垮 UI。
+        // 上界 1003：差异分支一次 push 两行，检查在 push 之后，再加截断标记。
+        assert!(
+            detail.diff_lines.len() <= 1003,
+            "diff 必须截断，实际 {} 行",
+            detail.diff_lines.len()
+        );
+        assert!(detail.diff_lines.iter().any(|l| l.contains("truncated")));
     }
 
     #[test]
@@ -1599,12 +2066,16 @@ mod tests {
         save_translation(Some(&conn), &tr_root, &doc).unwrap();
 
         // 加载相同快照 -> is_stale 为 false
-        let loaded = load_translation(&tr_root, "doc-coauthoring", Some("snap-v1")).unwrap().unwrap();
+        let loaded = load_translation(&tr_root, "doc-coauthoring", Some("snap-v1"))
+            .unwrap()
+            .unwrap();
         assert!(!loaded.is_stale);
         assert_eq!(loaded.purpose, "协助撰写设计文档");
 
         // 当上游升级到新快照 snap-v2 -> 提示 is_stale: true，但用户内容绝不丢失或静默覆盖！
-        let stale = load_translation(&tr_root, "doc-coauthoring", Some("snap-v2")).unwrap().unwrap();
+        let stale = load_translation(&tr_root, "doc-coauthoring", Some("snap-v2"))
+            .unwrap()
+            .unwrap();
         assert!(stale.is_stale, "快照升级必须标记说明已过期");
         assert_eq!(stale.markdown_body, "# 中文使用说明\n本文档由用户编写。");
     }
@@ -1641,11 +2112,22 @@ mod tests {
         };
 
         // 1. 正常规划与批量部署成功
-        let plan = plan_batch_deployment(&conn, &snap, &[t1.clone(), t2.clone()], std::slice::from_ref(&managed_root));
+        let plan = plan_batch_deployment(
+            &conn,
+            &snap,
+            &[t1.clone(), t2.clone()],
+            std::slice::from_ref(&managed_root),
+        );
         assert!(plan.can_apply);
         assert_eq!(plan.ready_targets, 2);
 
-        let res = deploy_batch_planned(&mut conn, &snap, &[t1.clone(), t2.clone()], std::slice::from_ref(&managed_root)).unwrap();
+        let res = deploy_batch_planned(
+            &mut conn,
+            &snap,
+            &[t1.clone(), t2.clone()],
+            std::slice::from_ref(&managed_root),
+        )
+        .unwrap();
         assert!(res.success);
         assert_eq!(res.deployed_count, 2);
         assert!(t1.path.join("SKILL.md").is_file());
@@ -1654,7 +2136,11 @@ mod tests {
         // 2. 模拟外部冲突目标：制造一个未托管且包含用户文件的目录
         let foreign_dir = managed_root.join("foreign-skills").join("my-skill");
         fs::create_dir_all(&foreign_dir).unwrap();
-        fs::write(foreign_dir.join("user-file.txt"), "Important unmanaged data").unwrap();
+        fs::write(
+            foreign_dir.join("user-file.txt"),
+            "Important unmanaged data",
+        )
+        .unwrap();
 
         let t_conflict = DeploymentTarget {
             host: "zed".into(),
@@ -1663,7 +2149,12 @@ mod tests {
             path: foreign_dir.clone(),
         };
 
-        let conflict_plan = plan_batch_deployment(&conn, &snap, std::slice::from_ref(&t_conflict), std::slice::from_ref(&managed_root));
+        let conflict_plan = plan_batch_deployment(
+            &conn,
+            &snap,
+            std::slice::from_ref(&t_conflict),
+            std::slice::from_ref(&managed_root),
+        );
         assert!(!conflict_plan.can_apply, "包含未托管冲突必须阻止应用");
         assert_eq!(conflict_plan.blocked_targets, 1);
 
@@ -1691,17 +2182,116 @@ mod tests {
         };
 
         // 直接调用 deploy_batch_planned 模拟包含执行失败的批处理
-        let batch_fail_res = deploy_batch_planned(&mut conn, &snap, &[t3, t4, t_fail], std::slice::from_ref(&managed_root)).unwrap();
+        let batch_fail_res = deploy_batch_planned(
+            &mut conn,
+            &snap,
+            &[t3, t4, t_fail],
+            std::slice::from_ref(&managed_root),
+        )
+        .unwrap();
         assert!(!batch_fail_res.success);
         assert_eq!(batch_fail_res.deployed_count, 0);
         assert_eq!(batch_fail_res.rolled_back_count, 2);
         // 4. 外部修改保护测试：部署后的目录若被外部篡改，重新部署或规划必须拒绝覆盖
         fs::write(t1.path.join("tampered.txt"), "external user edit").unwrap();
-        let tampered_plan = plan_batch_deployment(&conn, &snap, std::slice::from_ref(&t1), std::slice::from_ref(&managed_root));
-        assert!(!tampered_plan.can_apply, "被外部修改的托管目录必须阻止自动覆盖");
+        let tampered_plan = plan_batch_deployment(
+            &conn,
+            &snap,
+            std::slice::from_ref(&t1),
+            std::slice::from_ref(&managed_root),
+        );
+        assert!(
+            !tampered_plan.can_apply,
+            "被外部修改的托管目录必须阻止自动覆盖"
+        );
         assert_eq!(tampered_plan.blocked_targets, 1);
 
         let direct_deploy_err = deploy(&conn, &snap, &t1, &managed_root).unwrap_err();
-        assert!(direct_deploy_err.contains("was modified externally"), "deploy 必须明确拒绝覆盖被外部修改的目录");
+        assert!(
+            direct_deploy_err.contains("was modified externally"),
+            "deploy 必须明确拒绝覆盖被外部修改的目录"
+        );
+    }
+
+    #[test]
+    fn rollback_refuses_externally_modified_target() {
+        // 回滚是整目录删除，与部署一样必须遵守“外部修改即停止自动操作”的不变量。
+        let mut conn = setup();
+        let tmp = tempfile::tempdir().unwrap();
+        let skills_root = tmp.path().join("skills");
+        let managed_root = tmp.path().join("managed");
+        fs::create_dir_all(&managed_root).unwrap();
+
+        write_skill(tmp.path(), "my-skill", &[("SKILL.md", "# Skill Content")]);
+        let src = SkillSource {
+            repo: "org/repo".into(),
+            commit_sha: "commit123456789".into(),
+            skill_path: "my-skill".into(),
+        };
+        let snap = create_snapshot(&skills_root, &src, &tmp.path().join("my-skill")).unwrap();
+        record_snapshot(&conn, &src, &snap).unwrap();
+
+        let t = DeploymentTarget {
+            host: "pi".into(),
+            host_version: "0.84.2".into(),
+            scope: "user".into(),
+            path: managed_root.join("pi-skills").join("my-skill"),
+        };
+        let res = deploy_batch_planned(
+            &mut conn,
+            &snap,
+            std::slice::from_ref(&t),
+            std::slice::from_ref(&managed_root),
+        )
+        .unwrap();
+        assert!(res.success);
+        let dep_id: i64 = conn
+            .query_row(
+                "SELECT id FROM skill_deployment WHERE state = 'deployed' LIMIT 1",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+
+        // 无外部修改：回滚正常删除并标记。
+        rollback(&conn, dep_id, &t.path).unwrap();
+        assert!(!t.path.exists());
+
+        // 重新部署后模拟外部修改：回滚必须拒绝且目录原样保留。
+        let res2 = deploy_batch_planned(
+            &mut conn,
+            &snap,
+            std::slice::from_ref(&t),
+            std::slice::from_ref(&managed_root),
+        )
+        .unwrap();
+        assert!(res2.success);
+        let dep_id2: i64 = conn
+            .query_row(
+                "SELECT id FROM skill_deployment WHERE state = 'deployed' ORDER BY id DESC LIMIT 1",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        fs::write(
+            t.path.join("user-notes.txt"),
+            "user data written outside Aster",
+        )
+        .unwrap();
+
+        let err = rollback(&conn, dep_id2, &t.path).unwrap_err();
+        assert!(err.contains("external modification"), "got: {err}");
+        assert!(
+            t.path.join("user-notes.txt").is_file(),
+            "外部修改的目录必须原样保留"
+        );
+        let state: String = conn
+            .query_row(
+                "SELECT state FROM skill_deployment WHERE id = ?1",
+                [dep_id2],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(state, "deployed", "被拒绝的回滚不得改动部署状态");
     }
 }
