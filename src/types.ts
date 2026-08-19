@@ -28,8 +28,53 @@ export type PiSessionState = {
   thinkingLevel?: string;
   isStreaming?: boolean;
   sessionId?: string;
-  sessionFile?: string;
   messageCount?: number;
+};
+
+export type PiSessionSummary = {
+  sessionId: string;
+  name: string | null;
+  createdAt: string;
+  modifiedAt: string;
+  messageCount: number;
+  availability: "available" | "missing" | "project_missing" | "unsupported";
+  isActive: boolean;
+};
+
+export type PiProjectNode = {
+  path: string;
+  displayName: string;
+  sessions: PiSessionSummary[];
+};
+
+export type PiEventEnvelope = {
+  runtimeInstanceId: number;
+  sessionId: string | null;
+  eventType: string;
+  summary: string;
+  raw: Record<string, unknown>;
+};
+
+export type PiMessage = {
+  role: "user" | "assistant" | "toolResult" | "system";
+  content: unknown;
+  timestamp?: number;
+};
+
+export type PiActiveSession = {
+  runtimeInstanceId: number;
+  projectPath: string;
+  projectDisplayName: string;
+  sessionId: string;
+  sessionName: string | null;
+  model: PiModel | null;
+  thinkingLevel: string;
+  isStreaming: boolean;
+  isCompacting: boolean;
+  messageCount: number;
+  contextUsage: Record<string, unknown> | null;
+  permissionSummary: "windows_user";
+  messages: PiMessage[];
 };
 
 export type PiEvent = {

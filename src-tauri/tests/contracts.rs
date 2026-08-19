@@ -5,6 +5,11 @@
 //! - 验证字段命名别名（如 host vs host_id, scope vs scope_kind）、默认值缺省处理、
 //!   枚举 snake_case 命名以及路径安全解析。
 
+use aster_lib::pi_commands::{
+    PiActiveSessionDto, PiEventEnvelopeDto, PiProjectNodeDto, PiSessionCreateArgs,
+    PiSessionOpenArgs, PiSessionPromptArgs, PiSessionSetModelArgs, PiSessionSetNameArgs,
+    PiSessionSetThinkingArgs, PiSessionSummaryDto, PERMISSION_SUMMARY,
+};
 use aster_lib::skill_flow::{
     self, BatchDeployResult, DeploymentPlanItem,
     DeploymentTarget, PlanItemStatus,
@@ -227,4 +232,71 @@ fn contract_strict_path_resolution_and_empty_scope() {
     }];
     let resolved_unknown = skill_flow::resolve_deployment_targets(&unknown_target, "test-skill", None);
     assert!(resolved_unknown[0].path.as_os_str().is_empty(), "未安装/不存在的宿主不应生成虚构路径");
+}
+
+#[test]
+fn contract_pi_session_command_payloads_are_camel_case() {
+    let fixtures = load_fixtures();
+
+    let create: PiSessionCreateArgs =
+        serde_json::from_value(fixtures["PiSessionCreateArgs"].clone()).unwrap();
+    assert_eq!(create.project_path, r"C:\Workspace\project-a");
+
+    let open: PiSessionOpenArgs =
+        serde_json::from_value(fixtures["PiSessionOpenArgs"].clone()).unwrap();
+    assert_eq!(open.project_path, r"C:\Workspace\project-a");
+    assert_eq!(open.session_id, "session-1");
+
+    let name: PiSessionSetNameArgs =
+        serde_json::from_value(fixtures["PiSessionSetNameArgs"].clone()).unwrap();
+    assert_eq!(name.name, "Refactor settings");
+
+    let model: PiSessionSetModelArgs =
+        serde_json::from_value(fixtures["PiSessionSetModelArgs"].clone()).unwrap();
+    assert_eq!(model.provider, "fixture");
+    assert_eq!(model.model_id, "fixture-model");
+
+    let thinking: PiSessionSetThinkingArgs =
+        serde_json::from_value(fixtures["PiSessionSetThinkingArgs"].clone()).unwrap();
+    assert_eq!(thinking.level, "medium");
+
+    let prompt: PiSessionPromptArgs =
+        serde_json::from_value(fixtures["PiSessionPromptArgs"].clone()).unwrap();
+    assert_eq!(prompt.message, "fixture prompt");
+
+    let active: PiActiveSessionDto =
+        serde_json::from_value(fixtures["PiActiveSessionDto_sample"].clone()).unwrap();
+    assert_eq!(active.runtime_instance_id, 1);
+    assert_eq!(active.session_id, "session-1");
+    assert_eq!(active.permission_summary, PERMISSION_SUMMARY);
+    assert!(serde_json::to_value(&active)
+        .unwrap()
+        .get("sessionFile")
+        .is_none());
+
+    let node: PiProjectNodeDto =
+        serde_json::from_value(fixtures["PiProjectNodeDto_sample"].clone()).unwrap();
+    assert_eq!(node.sessions.len(), 1);
+    let summary: PiSessionSummaryDto = node.sessions[0].clone();
+    assert!(summary.is_active);
+
+    let envelope: PiEventEnvelopeDto =
+        serde_json::from_value(fixtures["PiEventEnvelopeDto_sample"].clone()).unwrap();
+    assert_eq!(envelope.runtime_instance_id, 9);
+    assert_eq!(envelope.event_type, "message_update");
+}
+
+#[test]
+fn contract_frontend_may_not_select_session_by_session_file() {
+    let err = serde_json::from_value::<PiSessionOpenArgs>(serde_json::json!({
+        "projectPath": r"C:\Workspace\project-a",
+        "sessionId": "session-1",
+        "sessionFile": r"C:\fixture\sessions\session-1.jsonl"
+    }))
+    .unwrap_err();
+    let msg = err.to_string();
+    assert!(
+        msg.contains("sessionFile") || msg.contains("unknown field"),
+        "open args must reject sessionFile, got {msg}"
+    );
 }

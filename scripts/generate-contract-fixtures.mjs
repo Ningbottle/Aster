@@ -98,6 +98,63 @@ const contractSamples = {
   PiPromptArgs: {
     prompt: "Hello Pi, please summarize our current tasks.",
   },
+  PiSessionCreateArgs: {
+    projectPath: "C:\\Workspace\\project-a",
+  },
+  PiSessionOpenArgs: {
+    projectPath: "C:\\Workspace\\project-a",
+    sessionId: "session-1",
+  },
+  PiSessionSetNameArgs: {
+    name: "Refactor settings",
+  },
+  PiSessionSetModelArgs: {
+    provider: "fixture",
+    modelId: "fixture-model",
+  },
+  PiSessionSetThinkingArgs: {
+    level: "medium",
+  },
+  PiSessionPromptArgs: {
+    message: "fixture prompt",
+  },
+  PiActiveSessionDto_sample: {
+    runtimeInstanceId: 1,
+    projectPath: "C:\\Workspace\\project-a",
+    projectDisplayName: "project-a",
+    sessionId: "session-1",
+    sessionName: "Fixture session",
+    model: { id: "fixture-model", name: "Fixture Model", provider: "fixture" },
+    thinkingLevel: "medium",
+    isStreaming: false,
+    isCompacting: false,
+    messageCount: 2,
+    contextUsage: { tokens: 20, contextWindow: 1000, percent: 2 },
+    permissionSummary: "windows_user",
+    messages: [{ role: "user", content: "fixture user message" }],
+  },
+  PiProjectNodeDto_sample: {
+    path: "C:\\Workspace\\project-a",
+    displayName: "project-a",
+    sessions: [
+      {
+        sessionId: "session-1",
+        name: "Fixture session",
+        createdAt: "2026-08-19T00:00:00Z",
+        modifiedAt: "2026-08-19T00:00:00Z",
+        messageCount: 2,
+        availability: "available",
+        isActive: true,
+      },
+    ],
+  },
+  PiEventEnvelopeDto_sample: {
+    runtimeInstanceId: 9,
+    sessionId: "session-1",
+    eventType: "message_update",
+    summary: "text: hello",
+    raw: { assistantMessageEvent: { type: "text_delta", delta: "hello" } },
+  },
   DshStartArgs: {
     host: "127.0.0.1",
     port: 38472,

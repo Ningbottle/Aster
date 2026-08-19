@@ -168,6 +168,25 @@ pub fn project_paths_equal(a: &Path, b: &Path) -> bool {
     normalize_project_path(a).eq_ignore_ascii_case(&normalize_project_path(b))
 }
 
+pub fn relative_locator(root: &Path, path: &Path) -> Result<String, PiCatalogError> {
+    if let Ok(rel) = path.strip_prefix(root) {
+        if locator_escapes(rel) {
+            return Err(PiCatalogError::PathEscape);
+        }
+        return Ok(rel.to_string_lossy().replace('/', "\\"));
+    }
+    let root_key = normalize_project_path(root);
+    let path_key = normalize_project_path(path);
+    if !path_key_is_within(&root_key, &path_key) {
+        return Err(PiCatalogError::PathEscape);
+    }
+    let prefix = format!("{}\\", root_key.trim_end_matches('\\'));
+    if path_key.len() <= prefix.len() || !path_key[..prefix.len()].eq_ignore_ascii_case(&prefix) {
+        return Err(PiCatalogError::PathEscape);
+    }
+    Ok(path_key[prefix.len()..].to_string())
+}
+
 fn path_key_is_within(root_key: &str, candidate_key: &str) -> bool {
     let root = root_key.trim_end_matches('\\');
     let cand = candidate_key.trim_end_matches('\\');

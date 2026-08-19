@@ -4,6 +4,7 @@ pub mod dsh_connector;
 pub mod evidence;
 pub mod host_profile;
 pub mod logging;
+pub mod pi_commands;
 pub mod pi_connector;
 pub mod pi_runtime;
 pub mod pi_sessions;
@@ -50,7 +51,7 @@ fn get_app_status() -> Result<AppStatus, String> {
     })
 }
 
-fn open_layout_and_db() -> Result<(app_data::AppDataLayout, rusqlite::Connection), String> {
+pub(crate) fn open_layout_and_db() -> Result<(app_data::AppDataLayout, rusqlite::Connection), String> {
     let layout = app_data::AppDataLayout::open_default().map_err(|e| e.to_string())?;
     let mut conn = db::open_connection(&layout.database.join("aster.db")).map_err(|e| e.to_string())?;
     db::migrate(&mut conn).map_err(|e| e.to_string())?;
@@ -88,7 +89,7 @@ fn pi_workspace(layout: &app_data::AppDataLayout) -> PathBuf {
     dir
 }
 
-fn locked_runtime() -> Result<PiRuntime, String> {
+pub(crate) fn locked_runtime() -> Result<PiRuntime, String> {
     let root = app_data::AppDataLayout::default_root().map_err(|e| e.to_string())?;
     let runtimes = pi_connector::discover(&root);
     if let Some(managed) = runtimes.iter().find(|r| r.managed && r.version == pi_connector::LOCKED_PI_VERSION) {
@@ -104,8 +105,7 @@ fn locked_runtime() -> Result<PiRuntime, String> {
     ))
 }
 
-#[allow(dead_code)]
-fn pi_event_sink(app: tauri::AppHandle) -> PiEventSink {
+pub(crate) fn pi_event_sink(app: tauri::AppHandle) -> PiEventSink {
     Arc::new(move |instance_id, event: SessionEvent| {
         let session_id = app
             .try_state::<PiRuntimeManager>()
@@ -148,22 +148,6 @@ fn pi_set_model(
 #[tauri::command]
 fn pi_get_state(state: tauri::State<PiRuntimeManager>) -> Result<serde_json::Value, String> {
     state.get_state()
-}
-
-#[tauri::command]
-fn pi_session_prompt(state: tauri::State<PiRuntimeManager>, message: String) -> Result<(), String> {
-    state.prompt(&message)
-}
-
-#[tauri::command]
-fn pi_session_abort(state: tauri::State<PiRuntimeManager>) -> Result<String, String> {
-    let _ = state.abort()?;
-    Ok("cancellation requested".into())
-}
-
-#[tauri::command]
-fn pi_session_stop(state: tauri::State<PiRuntimeManager>) -> Result<(), String> {
-    state.stop()
 }
 
 #[tauri::command]
@@ -903,13 +887,20 @@ pub fn run() {
             pi_discover,
             pi_install_managed,
             pi_session_status,
-            pi_session_prompt,
-            pi_session_abort,
-            pi_session_stop,
             pi_session_observation,
             pi_get_available_models,
             pi_set_model,
             pi_get_state,
+            pi_commands::pi_project_tree_refresh,
+            pi_commands::pi_session_create,
+            pi_commands::pi_session_open,
+            pi_commands::pi_session_snapshot,
+            pi_commands::pi_session_set_name,
+            pi_commands::pi_session_set_model,
+            pi_commands::pi_session_set_thinking_level,
+            pi_commands::pi_session_prompt,
+            pi_commands::pi_session_abort,
+            pi_commands::pi_session_stop,
             dsh_discover,
             dsh_install_managed,
             dsh_start,
