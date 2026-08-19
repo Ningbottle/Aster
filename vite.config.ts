@@ -1,9 +1,13 @@
-import { defineConfig } from "vite";
+import { defineConfig } from "vitest/config";
 import { svelte } from "@sveltejs/vite-plugin-svelte";
 
 // Tauri 期望固定开发端口；前端产物输出到 dist/，由 tauri.conf.json 的 frontendDist 引用。
 export default defineConfig({
   plugins: [svelte()],
+  test: {
+    include: ["src/**/*.test.ts"],
+    environment: "node",
+  },
   clearScreen: false,
   server: {
     port: 1420,

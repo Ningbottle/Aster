@@ -8,6 +8,7 @@
     "build": "vite build",
     "check": "svelte-check --tsconfig ./tsconfig.json",
     "lint:nofake": "node scripts/ci-no-fake-data.mjs",
+    "test:unit": "vitest run",
     "tauri": "tauri"
   },
   "dependencies": {
@@ -21,6 +22,7 @@
     "svelte": "^5.40.0",
     "svelte-check": "^4.3.2",
     "typescript": "^5.9.3",
-    "vite": "^7.1.9"
+    "vite": "^7.1.9",
+    "vitest": "^3.2.4"
   }
 }
