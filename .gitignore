@@ -11,3 +11,26 @@ src-tauri/gen/schemas/
 *.local
 .env
 .env.*
+
+# Acceptance test scratch space
+.tmp/
+
+# Local probes, editor/agent workspaces and scratch material
+.dsh-probe/
+.qoder/
+scratch/
+
+# Public repository: one product summary + one AI development policy.
+# Local detailed docs remain readable to AI but are not published to GitHub.
+*.md
+*.mdx
+!/README.md
+!/AGENTS.md
+docs/
+docx/
+deep-research-output/
+*.doc
+*.docx
+*.odt
+*.pdf
+aster-workbench.html

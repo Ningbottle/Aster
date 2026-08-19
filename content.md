@@ -1,9 +1,11 @@
 # Aster 产品与架构基线
 
-状态：M3 完成基线（2026-08-16 更新：M3 Skills Manager 广度完成，11 宿主 Profiles、多 Skill 仓库解析、快照 Diff、中文说明、安全隔离与批量部署补偿回滚，命令见 README，决策见 `docs/adr/ADR-0004`）  
-日期：2026-08-16  
+> 本地架构参考，不提交到 GitHub。本文中的 R1–R4 阶段状态已经成为历史记录；当前详细状态只看 `docs/status.md`，当前公开摘要看 `README.md`。架构原则仍可引用，但不得用旧里程碑文字判断当前完成度。
+
+状态：R1–R3 事实恢复与缺陷修复中；R4 暂停启动。动态结果见 [`docs/status.md`](docs/status.md)
+日期：2026-08-18
 正式支持平台：Windows 10 22H2 / Windows 11 x64  
-产品阶段：M3 Skills Manager 广度完成（见第 14 节退出标准与仓库 README）
+产品阶段：R1/R2 验证失败项修复 + R3 人工/外部验证（见第 14 节与当前状态页）
 
 本文是 Aster 当前的产品、架构与交付事实源。它描述“要构建什么、责任在哪里、怎样证明完成”，不冻结具体 Rust trait、SQLite 表、Svelte 组件或目录结构。高代价技术偏离应写 ADR，并同步更新本文。
 
@@ -329,17 +331,23 @@ Aster 不保存 Pi/DSH 模型/API 密钥。GitHub 令牌只放 Windows Credentia
 
 退出标准：在真实运行的 Tauri 窗口中手工完成“扫描→快照→计划→部署→查 evidence→回滚”全链路并留存操作证据；为每个 invoke 参数结构建立契约测试（前端序列化样本→Rust serde round-trip）并进入 CI；CI 增加前端假数据 grep 门禁。
 
+当前状态：以 [`docs/status.md`](docs/status.md) 和 [`docs/milestones/R1.md`](docs/milestones/R1.md) 为准。2026-08-18 真实 UI 重验中，列表与详情可见，但历史快照 Diff 卡在“计算中”，完整 UI 链路尚未通过。
+
 ### R2 — DSH 兑现或如实降级（1–3 周）
 
 结果：runner 真正加载 `@deepseek-ai/dsh-web-app`，健康探针改为匹配真实应用标记；若技术上无法承载，则 UI 明示“未验证/占位”并修正 ADR-0003 与本文件 §7 的承诺。二者必居其一，不允许维持虚假完成。
 
 退出标准：窗口中呈现并可操作 DSH 真实界面（插件、模式可用），或文档与 UI 一致声明降级状态；端口冲突、崩溃、Aster 重启与 WebView 导航边界测试通过。
 
+当前状态：以 [`docs/status.md`](docs/status.md) 和 [`docs/milestones/R2.md`](docs/milestones/R2.md) 为准。2026-08-18 真实 UI 重验观察到嵌入/独立窗口空白、停止卡住和退出后进程残留，故状态为验证失败，不能称为兑现完成。
+
 ### R3 — Alpha 必备缺失项（2–3 周）
 
 结果：工作目录选择、最近项目与每宿主独立工作上下文（真实持久化）；GitHub 来源入口、私有仓库 Device Flow、隔离区 UI。
 
 退出标准：新用户从空数据库启动，不依赖任何预置数据即可完成“选目录→接入宿主→安装 Skill”首次体验；Device Flow 与隔离区在 UI 可操作、可观察。
+
+当前状态：以 [`docs/status.md`](docs/status.md) 和 [`docs/milestones/R3.md`](docs/milestones/R3.md) 为准。实现与自动化验证已存在，真实 UI 入口可见；空数据库首次体验、真实 GitHub/Device Flow、Credential Manager 和隔离删除仍待验证。
 
 ### R4 — 更新与恢复（原 M4，顺延，2–4 周）
 
@@ -401,7 +409,8 @@ Aster 不保存 Pi/DSH 模型/API 密钥。GitHub 令牌只放 Windows Credentia
 
 ## 19. 下一步
 
-1. 执行 R1 真实性修复：删除全部前端假数据，修复批量部署字段契约，接线 Diff/回滚/真实技能列表，建立契约测试层与假数据 grep 门禁。
-2. 执行 R2：限时实验验证 `@deepseek-ai/dsh-web-app` 能否在 runner 中真实加载；不能则如实降级并修正 ADR-0003 与 §7。
-3. R1–R3 完成后再启动 R4 更新与恢复中心，不提前展开。
+1. 修正自动 evidence 与人工 UI evidence 的边界，禁止脚本生成超出实际操作范围的“完成”结论。
+2. 先修复 R1 Diff 卡住，再定位 R2 空白页与停止/退出残留；两项均以失败复现、自动回归和真实 Tauri UI 复验关闭。
+3. 使用隔离的空数据目录验证 R3 首次体验；真实 GitHub/Device Flow/Credential Manager 单独记录外部证据。
+4. R1–R3 合同关闭、文档与 Git 边界一致后再启动 R4。具体执行顺序见 [`docs/status.md`](docs/status.md)。
 

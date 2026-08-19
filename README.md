@@ -1,72 +1,172 @@
 # Aster
 
-Aster 是面向熟悉 AI 工具的开发者的 Windows 本地优先桌面工作台：在同一应用中分别使用
-Pi 或 DeepSeek Harness（DSH），管理工作目录与跨工具 Skills，观察工具执行，管理宿主版本。
+Aster 是面向熟悉 AI 工具的开发者与高级用户的 Windows 本地优先桌面工作台。它在同一应用中分别承载 Pi 与 DeepSeek Harness（DSH），并管理工作目录、Skills、宿主运行状态和本地证据。
 
-产品范围、架构与里程碑见 [`content.md`](content.md)；开发不变量见 [`AGENTS.md`](AGENTS.md)。
-当前阶段：**M3 Skills Manager 广度管理**（11 个目标工具 Profiles 事实表与本地扫描、
-多 Skill 仓库分组与独立快照、中文派生说明生命周期与过期保护、恶意脚本/二进制 Quarantine 分区安全隔离、
-快照版本间 Unified Diff 查看、多目标批量部署计划 Plan & Apply、外部冲突拦截与事务补偿回滚、分级 Evidence）。
+更新日期：2026-08-19
 
-## 环境要求
+当前结论：**项目处于新版 M0「安全阻断」阶段，M0 尚未完成。** M0.1 活动 Pi Session 下的 Project 保护已有真实 invoke 验收。M0.2 Skills 错误入口已从普通 UI 移除，GitHub 弹窗三种关闭已观察到。M0.3 Runtime 事实源尚未在 App/Home 收口。Pi 控制台 V0–V5 主项此前已观察。不能把 M0 或 M2/M3 标为阶段完成。
+
+AI / Coding Agent 的唯一开发规约见 [`AGENTS.md`](AGENTS.md)。README 保存公开产品基线和状态摘要；本机可在被 Git 忽略的 `docs/` 中维护详细状态、计划和证据。二者冲突时必须依据代码与验证结果纠正，不能让旧文档覆盖当前结论。
+
+## 目前到底做到哪里
+
+仓库经历过三套阶段命名，旧名称不能直接映射成当前完成度：
+
+| 时期 | 发生了什么 | 现在如何看待 |
+|---|---|---|
+| 初始 M0–M3 | 建立 Svelte/Tauri/Rust/SQLite、Pi RPC、DSH、Skills 等基础；提交 4265376 曾写成 “M0–M3 complete” | 后续审计证明 selftest 和后端测试不能代表真实 UI 可用，该完成结论已失效 |
+| 整改 R1–R3 | R1 修复假数据和 Skills UI 链路；R2 兑现 DSH 原生 Web UI 并修复 Windows 建窗死锁；R3 增加项目、GitHub 来源、Credential Manager 和隔离区入口 | R1/R2 做过真实 UI 复审，但相关大批改动仍在未提交工作区；R3 只有自动化与部分 UI 证据，外部授权和若干失败路径没有完成 |
+| Pi Project→Session | 4265376 之后有本地提交，建立 Pi 原生会话索引、项目树、RPC 操作和会话工作区 | 核心架构完成；V0–V5 主项已观察；tool-call 路由、OS 200% DPI、真实 Tab 遍历未覆盖 |
+| 当前 M0–M7 | 按产品结构和真实用户链路重新排序 | 这是唯一有效的当前路线图 |
+
+当前分阶段状态：
+
+| 阶段 | 状态 | 代码事实 |
+|---|---|---|
+| M0 — 安全阻断 | **未完成** | 全局 ProjectSelector 仍可直接切换项目；GitHub 弹窗发出 close 事件但父级未处理；Skills 仍显示无作用域“回滚最新部署”和“M1 示例流水线”；Runtime 状态仍分散 |
+| M1 — 稳定控制台外壳 | 未开始，只有 Pi Sidebar 局部能力 | 当前仍保留 Home、Agents、Infra 入口；尚未形成只含 Pi、DSH、Skills-Hub 的固定模块栏，也没有三个模块各自完整的 Sidebar 记忆 |
+| M2 — Pi Project→Session 模型 | 核心架构完成，阶段未验收 | 索引/树/打开/重命名/重启恢复/缺失状态已观察；M0 全局 Project 切换仍未保护 |
+| M3 — Pi Session 工作区 | 核心架构完成，阶段未验收 | Prompt/stream/cancel/busy/settle 与重启恢复已观察；tool-call 与 Crash Recovery 未真实覆盖 |
+| M4 — DSH 控制台降噪 | 未开始 | DSH 原生 Web UI 已能承载，但普通栏仍展示 PID、URL、版本和 Boot Probe，尚未移入 Details |
+| M5 — Skills 本地发现与来源模型 | 未开始 | 现有扫描、快照和部署资产可复用，但三类关系与可空、带证据/置信度的来源模型尚未建立 |
+| M6 — Skills-Hub UI | 未开始 | 现有 Skills 页面不是目标中的工具分类 Sidebar、紧凑列表、Provenance/Compatibility/History 完整信息架构 |
+| M7 — Settings 与产品级验证 | 未开始 | 尚无独立 Settings 产品面和完整的高 DPI、200% 缩放、高对比、焦点及长期使用验收 |
+
+因此，不能说“已经做到 M3”。准确说法是：**当前总阶段仍在 M0；Pi 控制台核心架构与 V1 主链路已通过，但 M2/M3 没有通过新版阶段门禁。**
+
+## 当前 M0 — 安全阻断
+
+M0 只矫正安全与事实错误，不做视觉重构：
+
+- 阻止活动 Pi Session 下静默切换 Project。
+- 修复 GitHub 弹窗无法关闭。
+- 移除无作用域回滚和 M1 示例按钮。
+- 统一 Runtime 状态事实。
+
+上述四项全部完成并经过真实 UI 操作验证后，才进入 M1。
+
+## 当前路线图
+
+### M1 — 稳定控制台外壳
+
+- 只保留 Pi、DSH、Skills-Hub 三个一级模块。
+- 建立固定全局模块栏。
+- 建立可折叠、隐藏、调整宽度的模块 Sidebar。
+- 为三个模块分别记忆 Sidebar 状态。
+- 移除伪菜单、Home、Agents 和 Infra 一级入口。
+- 验收最小窗口、高 DPI、折叠/恢复和无水平滚动。
+
+### M2 — Pi Project→Session 模型
+
+- 建立 Project 与 Pi 原生 Session 的可靠索引。
+- Sidebar 展示 Project Tree 和真实 Session。
+- 创建 Session 时绑定 Project/cwd。
+- 恢复、归档和重命名 Session。
+- Project 切换不改变运行中 Session。
+
+本阶段先解决状态事实，不先美化聊天区。
+
+### M3 — Pi Session 工作区
+
+- 完整恢复 Pi 时间线。
+- Session Header 提供模型、Thinking、Context、Compaction 和权限状态。
+- 工具调用可展开。
+- 支持 Cancel、Retry 和 Crash Recovery。
+- 删除假“默认模型”和开发计数。
+
+### M4 — DSH 控制台降噪
+
+- 保留 DSH 一级模块和原生 Web UI 全幅展示。
+- 普通标题栏只显示语义状态和必要操作。
+- PID、URL、版本和 Boot Probe 移入 Details。
+- 完成启动慢、配置缺失、崩溃和端口冲突状态。
+- 不重写 DSH 原生 Session、插件或模型系统。
+
+### M5 — Skills 本地发现与来源模型
+
+- 按工具扫描本地 Skills。
+- 区分 discovered_under、compatible_with、deployed_to。
+- 来源为可空、带证据和置信度的对象。
+- 支持来源未知、本地导入、远程来源和部署副本。
+- 不按名称猜来源或自动合并。
+
+### M6 — Skills-Hub UI
+
+- 工具分类 Sidebar。
+- 紧凑 Skill 列表、搜索、过滤和排序。
+- Markdown 阅读器与中文派生说明过期状态。
+- Compatibility、Deployments、History、Provenance。
+- 安全展示同名、未知来源的 Skills。
+
+### M7 — Settings 与产品级验证
+
+- Appearance、字体、字号、UI Zoom、密度和主题。
+- Sidebar 行为。
+- Pi 默认模型和新 Session 行为。
+- DSH Runtime 策略。
+- Skills 扫描和翻译设置。
+- Advanced/Developer Diagnostics。
+- 键盘、焦点、200% 缩放、高对比和长期使用验证。
+
+## 不可破坏的产品边界
+
+- Alpha 只正式支持 Windows 10 22H2 / Windows 11 x64，普通用户权限。
+- 技术主线是 Svelte 5 + TypeScript、Tauri 2、Rust Core、SQLite 和受监管子进程。
+- Pi 与 DSH 是独立宿主，不共享 RPC 类型、会话状态机、插件模型或 UI 流程。
+- Pi 只走严格 JSONL RPC；Pi JSONL 是对话事实源，SQLite 只保存可重建索引。
+- DSH 保留原生 Web UI、插件、自定义模式和持久化语义。
+- Aster 不读取、保存、迁移或同步 Pi/DSH 的模型/API 凭据。
+- GitHub 私有来源令牌只进入 Windows Credential Manager。
+- 原始 Skill snapshot 不可变；Aster 不执行下载内容中的脚本或二进制。
+- 默认复制部署，不覆盖未托管目录；检测到外部修改后停止自动写入。
+- Evidence 区分发现、配置、宿主加载和真实可调用，未知状态不能写成成功。
+- Aster、Pi、DSH 更新是三个独立任务；任何安装或切换都需要用户确认。
+- Alpha 不上传遥测或崩溃报告；诊断导出必须主动触发、可预览并默认脱敏。
+
+## 完成与验证规则
+
+- 单元测试、selftest、fixture 或后端命令成功不等于用户功能完成。
+- 用户可见功能必须有真实 UI → invoke → Rust 链路操作证据。
+- 前端不硬编码 Skills、Evidence、会话、计数或状态标签；后端错误必须在 UI 可见。
+- 前端 invoke 参数与 Rust serde DTO 必须有契约测试。
+- 没有实际运行验证，不声称“通过”“兼容”“可回滚”或“完成”。
+- 旧的 --selftest-m1/m2/m3 只是遗留诊断入口，不代表当前 M1/M2/M3。
+
+## 开发环境
 
 - Windows 10 22H2 / Windows 11 x64
-- Node.js ≥ 22（开发用；运行时不需要）
-- Rust stable（MSVC toolchain）—— `rustup default stable-x86_64-pc-windows-msvc`
-- WebView2 Runtime（Windows 11 自带；Windows 10 通常已随 Edge 安装）
+- Node.js 22 或更高
+- Rust stable，MSVC toolchain
+- WebView2 Runtime
 
-## 命令（唯一权威来源）
-
-所有命令在仓库根目录执行，除非另行注明：
+所有命令在仓库根目录运行：
 
 | 用途 | 命令 |
 |---|---|
-| 安装前端依赖 | `npm install` |
-| 开发模式（启动完整桌面应用，热重载） | `npm run tauri dev` |
-| 前端单元测试（纯状态 / reducer） | `npm run test:unit` |
-| 前端类型检查 | `npm run check` |
-| 前端与后端假数据/规范门禁 | `npm run lint:nofake` |
-| 前端生产构建（只产出 `dist/`） | `npm run build` |
-| Rust 测试（单元与集成测试） | `cargo test --manifest-path src-tauri/Cargo.toml` |
-| M1 真实端到端无头自检（Pi 0.84.2 + GitHub Skill 纵切） | `cargo run --manifest-path src-tauri/Cargo.toml -- --selftest-m1` |
-| M2 真实端到端无头自检（DSH 0.1.0-rc.6 发现/安装/端口/健康检查） | `cargo run --manifest-path src-tauri/Cargo.toml -- --selftest-m2` |
-| M3 真实端到端无头自检（11 工具 Profiles/多 Skill 仓库/隔离/Diff/批量部署回滚/分级 Evidence） | `cargo run --manifest-path src-tauri/Cargo.toml -- --selftest-m3` |
-| 完整发布构建（产出 NSIS 安装包） | `npm run tauri build` |
-| 发布版冒烟检查（隔离数据目录启动/验证数据库/终止） | `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/e2e-run-check.ps1` |
+| 安装依赖 | npm install |
+| 启动完整桌面应用 | npm run tauri dev |
+| 前端单元测试 | npm run test:unit |
+| 前端类型检查 | npm run check |
+| 假数据/规范门禁 | npm run lint:nofake |
+| 前端生产构建 | npm run build |
+| Rust 测试 | cargo test --manifest-path src-tauri/Cargo.toml |
+| 完整发布构建 | npm run tauri build |
+| 发布版冒烟检查 | powershell -NoProfile -ExecutionPolicy Bypass -File scripts/e2e-run-check.ps1 |
 
-CI（`.github/workflows/ci.yml`，windows-latest）执行：`cargo test` → `npm ci` →
-`npm run test:unit` → `npm run check` → `npm run lint:nofake` → `npm run tauri build`。不依赖任何上游仓库的实时状态。
+CI 在 Windows 上依次运行 Rust 测试、前端单测、类型检查、假数据门禁和 Tauri 发布构建。
 
-## 数据目录
+## 数据与仓库边界
 
-默认根目录 `%LOCALAPPDATA%\Aster`，分区：`database`、`runtimes`、`skills`、
-`translations`、`sessions`、`logs`、`exports`、`quarantine`、`staging`。
-数据库文件为 `database\aster.db`（SQLite，迁移以 `PRAGMA user_version` 记录）。
+默认数据根目录是 %LOCALAPPDATA%\Aster，数据库位于 database\aster.db。开发和测试可以用 ASTER_APP_DATA_DIR 指向隔离目录。
 
-开发/测试可用环境变量 `ASTER_APP_DATA_DIR` 重定向根目录；正式运行不要设置。
+GitHub 只维护两份 Markdown：README.md 是公开产品基线与状态摘要，AGENTS.md 是唯一 AI 开发规约。本机 `docs/`、`content.md`、操作证据、研究输出和 Office 文档由 AI 读取和维护，但通过 .gitignore 留在本机；详细状态以本机 `docs/status.md` 为入口。源代码中的协议 fixture、测试数据和构建配置不属于项目文档。
 
-## 重新生成图标
+主要目录：
 
-```bash
-node scripts/make-icon.mjs && npx tauri icon scripts/icon-source.png
-```
+    src/                 Svelte 5 + TypeScript 前端
+    src-tauri/src/       Rust Core、Tauri commands、SQLite 与宿主连接器
+    src-tauri/tests/     Rust 契约与集成测试
+    scripts/             CI、证据执行和发布辅助脚本
+    .github/workflows/   Windows CI
 
-## 仓库结构
-
-```
-src/                 Svelte 5 + TypeScript 前端（11 工具 Skills 广度面板、Pi/DSH/Infra 多工作台）
-src-tauri/src/
-  app_data.rs        AppData 目录布局
-  db.rs              SQLite 连接与版本化迁移（Migration 0001–0005）
-  dsh_connector.rs   DSH 独立连接器、动态端口分配、HTTP 健康检查与生命周期
-  evidence.rs        EvidenceStore 核心（追加/查询/失效）
-  host_profile.rs    11 工具只读 Profile 事实表、Windows 路径模板与本地扫描
-  logging.rs         JSONL 脱敏日志
-  pi_connector.rs    Pi 严格 JSONL RPC 连接器、流式状态机与生命周期
-  pi_sessions.rs     原生 JSONL 会话元数据编目（不复制对话原文）
-  pi_runtime.rs      单进程 Pi 运行时与项目/会话绑定
-  pi_commands.rs     Pi 项目→会话 Tauri 命令与 DTO
-  skill_flow.rs      多 Skill 解析、中文派生说明、Quarantine 隔离、Diff 与批量部署回滚
-  supervisor.rs      Windows 进程监管（启动/等待/树终止/退出分类）
-docs/adr/            架构决策记录（ADR-0001, ADR-0002, ADR-0003, ADR-0004）
-```
+当前工作区还包含整改 R1–R3 的未提交实现以及新加入的源文件。整理文档不等于这些实现已经验收，也不要用 reset/checkout 丢弃它们。
