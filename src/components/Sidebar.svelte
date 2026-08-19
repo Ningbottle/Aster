@@ -1,6 +1,21 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import { invoke } from "@tauri-apps/api/core";
   import type { ViewId } from "../types";
+  import ProjectSelector from "./ProjectSelector.svelte";
+  import PiProjectTree from "./pi/PiProjectTree.svelte";
+  import { piConsoleStore } from "../lib/pi/piConsoleStore";
+  import {
+    clampSidebarWidth,
+    isEditableTarget,
+    loadPiSidebarHidden,
+    loadPiSidebarWidth,
+    PI_SIDEBAR_DEFAULT,
+    PI_SIDEBAR_MAX,
+    PI_SIDEBAR_MIN,
+    savePiSidebarHidden,
+    savePiSidebarWidth,
+  } from "../lib/layout/sidebarPreferences";
 
   export let activeView: ViewId = "home";
   export let activeTool: string = "all";
@@ -9,11 +24,18 @@
   export let totalSkillsCount: number = 0;
   export let onSelectView: (id: ViewId) => void;
   export let onSelectTool: (tool: string) => void;
-  export let onNewPiConversation: () => void;
+  export let onProjectChange: (() => Promise<void>) | undefined = undefined;
 
   let sideWidths = { full: 248, slim: 176 };
   let isDragging = false;
   let sidebarEl: HTMLElement;
+  let piWidth = PI_SIDEBAR_DEFAULT;
+  let piHidden = false;
+
+  $: isSkills = activeView === "skills";
+  $: isPi = activeView === "pi";
+  $: noSidebar = activeView === "dsh" || activeView === "home" || (isPi && piHidden);
+  $: currentWidth = isPi ? piWidth : isSkills ? sideWidths.slim : sideWidths.full;
 
   onMount(() => {
     try {
@@ -28,41 +50,87 @@
     } catch (e) {
       console.debug("Failed to read stored sideWidths:", e);
     }
+    piWidth = loadPiSidebarWidth();
+    piHidden = loadPiSidebarHidden();
+    if (isPi) {
+      piConsoleStore.refreshTree().catch((err) => {
+        console.debug("Pi tree refresh failed:", err);
+      });
+    }
   });
-
-  $: isSkills = activeView === "skills";
-  $: noSidebar = activeView === "dsh" || activeView === "home";
-  $: currentWidth = isSkills ? sideWidths.slim : sideWidths.full;
 
   function handleResizeStart(e: PointerEvent) {
     e.preventDefault();
     isDragging = true;
     const startX = e.clientX;
-    const mode = isSkills ? "slim" : "full";
     const startW = currentWidth;
-    const min = isSkills ? 140 : 200;
-    const max = isSkills ? 300 : 420;
+    const min = isPi ? PI_SIDEBAR_MIN : isSkills ? 140 : 200;
+    const max = isPi ? PI_SIDEBAR_MAX : isSkills ? 300 : 420;
+    const mode = isSkills ? "slim" : "full";
 
     function onMove(ev: PointerEvent) {
       const w = Math.min(max, Math.max(min, startW + ev.clientX - startX));
-      sideWidths[mode] = Math.round(w);
+      if (isPi) {
+        piWidth = clampSidebarWidth(w);
+      } else {
+        sideWidths[mode] = Math.round(w);
+      }
     }
 
     function onUp() {
       isDragging = false;
       window.removeEventListener("pointermove", onMove);
       window.removeEventListener("pointerup", onUp);
-      try {
-        localStorage.setItem("aster.sideWidths", JSON.stringify(sideWidths));
-      } catch (e) {
-        console.debug("Failed to save sideWidths:", e);
+      if (isPi) {
+        piWidth = savePiSidebarWidth(piWidth);
+      } else {
+        try {
+          localStorage.setItem("aster.sideWidths", JSON.stringify(sideWidths));
+        } catch (err) {
+          console.debug("Failed to save sideWidths:", err);
+        }
       }
     }
 
     window.addEventListener("pointermove", onMove);
     window.addEventListener("pointerup", onUp);
   }
+
+  function adjustWidth(delta: number) {
+    if (isPi) {
+      piWidth = savePiSidebarWidth(piWidth + delta);
+      return;
+    }
+    const mode = isSkills ? "slim" : "full";
+    const min = isSkills ? 140 : 200;
+    const max = isSkills ? 300 : 420;
+    sideWidths[mode] = Math.min(max, Math.max(min, sideWidths[mode] + delta));
+    try {
+      localStorage.setItem("aster.sideWidths", JSON.stringify(sideWidths));
+    } catch (err) {
+      console.debug("Failed to save sideWidths:", err);
+    }
+  }
+
+  function handleGlobalKey(e: KeyboardEvent) {
+    if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== "b") return;
+    if (!isPi) return;
+    if (isEditableTarget(e.target)) return;
+    e.preventDefault();
+    piHidden = savePiSidebarHidden(!piHidden);
+  }
+
+  async function openProjectPicker() {
+    const picked = await invoke<string | null>("project_pick_directory");
+    if (picked && picked.trim()) {
+      await invoke("project_choose", { path: picked.trim() });
+      await piConsoleStore.refreshTree();
+      await onProjectChange?.();
+    }
+  }
 </script>
+
+<svelte:window on:keydown={handleGlobalKey} />
 
 {#if !noSidebar}
   <aside
@@ -72,21 +140,22 @@
     bind:this={sidebarEl}
   >
     <div class="side-scroll">
-      {#if !isSkills}
+      {#if isPi}
+        <PiProjectTree
+          projects={$piConsoleStore.tree}
+          error={$piConsoleStore.error}
+          treeStatus={$piConsoleStore.treeStatus}
+          openProjectPicker={openProjectPicker}
+          createSession={(path) => piConsoleStore.createSession(path)}
+          openSession={(path, id) => piConsoleStore.openSession(path, id)}
+        />
+      {:else if !isSkills}
         <div class="nav-group" id="side-nav">
-          <button
-            type="button"
-            class="nav-item"
-            class:active={activeView === "pi"}
-            on:click={() => {
-              onSelectView("pi");
-              onNewPiConversation();
-            }}
-          >
+          <button type="button" class="nav-item" class:active={activeView === "pi"} on:click={() => onSelectView("pi")}>
             <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4">
-              <path d="M8 2.5v11M2.5 8h11" />
+              <path d="M5.5 4L2 8l3.5 4M10.5 4L14 8l-3.5 4" />
             </svg>
-            <span>新对话</span>
+            <span>Pi 工作台</span>
           </button>
 
           <button
@@ -116,6 +185,11 @@
         </div>
 
         <div id="side-default">
+          <div class="side-section">工作目录</div>
+          <div style="padding: 2px 2px 6px;">
+            <ProjectSelector on:change={() => onProjectChange?.()} />
+          </div>
+
           <div class="side-section">工作区</div>
           <div class="nav-group">
             <button type="button" class="proj-item current" on:click={() => onSelectView("home")}>
@@ -125,19 +199,8 @@
               <span>工作台主页</span>
             </button>
           </div>
-
-          <div class="side-section">最近会话</div>
-          <div class="nav-group">
-            <button type="button" class="proj-item" on:click={() => { onSelectView("pi"); onNewPiConversation(); }}>
-              <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" style="width: 14px; height: 14px;">
-                <path d="M8 2.5v11M2.5 8h11" />
-              </svg>
-              <span>发起新会话</span>
-            </button>
-          </div>
         </div>
       {:else}
-        <!-- Skills-Hub 工具列表模式 -->
         <div id="side-tools">
           <div class="side-section">工具</div>
           <div class="nav-group">
@@ -167,28 +230,39 @@
       {/if}
     </div>
 
-    <div class="side-foot">
-      <span class="avatar">瓶</span>
-      <span class="name">小瓶子</span>
-      <button type="button" class="settings-btn" aria-label="设置" on:click={() => onSelectView("infra")}>
-        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4">
-          <circle cx="8" cy="8" r="2.2" />
-          <path d="M8 1.8v1.8M8 12.4v1.8M1.8 8h1.8M12.4 8h1.8M3.7 3.7l1.3 1.3M11 11l1.3 1.3M12.3 3.7L11 5M5 11l-1.3 1.3" />
-        </svg>
-      </button>
-    </div>
+    {#if !isPi}
+      <div class="side-foot">
+        <button type="button" class="settings-btn" aria-label="设置" on:click={() => onSelectView("infra")}>
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4">
+            <circle cx="8" cy="8" r="2.2" />
+            <path d="M8 1.8v1.8M8 12.4v1.8M1.8 8h1.8M12.4 8h1.8M3.7 3.7l1.3 1.3M11 11l1.3 1.3M12.3 3.7L11 5M5 11l-1.3 1.3" />
+          </svg>
+        </button>
+      </div>
+    {/if}
   </aside>
 
-  <!-- 侧边栏调宽手柄 -->
-  <div
+  <button
+    type="button"
     class="side-resize"
     class:dragging={isDragging}
-    title="拖拽调整侧边栏宽度"
-    role="separator"
+    title="拖拽或用方向键调整侧边栏宽度"
+    aria-label="调整侧边栏宽度"
     aria-orientation="vertical"
-    tabindex="-1"
+    aria-valuemin={isPi ? PI_SIDEBAR_MIN : isSkills ? 140 : 200}
+    aria-valuemax={isPi ? PI_SIDEBAR_MAX : isSkills ? 300 : 420}
+    aria-valuenow={currentWidth}
     on:pointerdown={handleResizeStart}
-  ></div>
+    on:keydown={(e) => {
+      if (e.key === "ArrowLeft") {
+        e.preventDefault();
+        adjustWidth(-10);
+      } else if (e.key === "ArrowRight") {
+        e.preventDefault();
+        adjustWidth(10);
+      }
+    }}
+  ></button>
 {/if}
 
 <style>
@@ -201,6 +275,7 @@
     padding: 8px;
     user-select: none;
     min-height: 0;
+    overflow-x: hidden;
   }
   .sidebar.slim {
     padding: 8px 6px;
@@ -335,6 +410,7 @@
   .side-scroll {
     flex: 1;
     overflow-y: auto;
+    overflow-x: hidden;
     min-height: 0;
   }
   .side-foot {
@@ -344,22 +420,6 @@
     display: flex;
     align-items: center;
     gap: 8px;
-  }
-  .avatar {
-    width: 24px;
-    height: 24px;
-    border-radius: 50%;
-    flex: none;
-    background: var(--accent);
-    color: #fff;
-    display: grid;
-    place-items: center;
-    font-size: 11px;
-    font-weight: 600;
-  }
-  .side-foot .name {
-    font-size: 12.5px;
-    font-weight: 550;
   }
   .side-foot .settings-btn {
     margin-left: auto;
@@ -400,7 +460,8 @@
     transition: background 0.12s ease;
   }
   .side-resize:hover::after,
-  .side-resize.dragging::after {
+  .side-resize.dragging::after,
+  .side-resize:focus-visible::after {
     background: var(--faint);
   }
 </style>

@@ -8,12 +8,13 @@
     DiscoveredHost,
     DshRuntime,
     DshStatus,
-    PiEvent,
+    PiEventEnvelope,
     PiObservation,
     PiRuntime,
     SkillItem,
     ViewId,
   } from "./types";
+  import { piConsoleStore } from "./lib/pi/piConsoleStore";
 
   import TitleBar from "./components/TitleBar.svelte";
   import Sidebar from "./components/Sidebar.svelte";
@@ -51,7 +52,6 @@
   let skillStatus: Record<string, unknown> | null = null;
   let skills: SkillItem[] = [];
   let observation: PiObservation | null = null;
-  let events: PiEvent[] = [];
   let lastBackendError: string | null = null;
 
   let piViewRef: PiView;
@@ -105,15 +105,8 @@
     }
 
     try {
-      unlisten = await listen<PiEvent>("pi-event", (e) => {
-        // 直接派发给 PiView 组件处理事件，避免数组长度游标截断与事件丢失
-        piViewRef?.handleIncomingEvent(e.payload);
-        events = [...events.slice(-200), e.payload];
-        if (["agent_end", "agent_settled", "tool_execution_end"].includes(e.payload.event_type)) {
-          invoke("pi_session_observation")
-            .then((o) => (observation = o as PiObservation))
-            .catch((err) => console.debug("pi observation error:", err));
-        }
+      unlisten = await listen<PiEventEnvelope>("pi-event", (e) => {
+        piConsoleStore.acceptEvent(e.payload);
       });
     } catch (e) {
       console.debug("pi-event listener setup fallback:", e);
@@ -145,6 +138,11 @@
     if (id === "dsh") {
       dshViewRef?.startDshServer();
     }
+    if (id === "pi") {
+      piConsoleStore.refreshTree().catch((err) => {
+        console.debug("Pi tree refresh failed:", err);
+      });
+    }
   }
 
   function handleCloseTab(id: "pi" | "dsh" | "skills") {
@@ -166,12 +164,8 @@
     activeTool = tool;
   }
 
-  function handleNewPiConversation() {
-    piViewRef?.openCompose();
-  }
-
   function handleOpenPiChat() {
-    piViewRef?.openChat();
+    handleSelectView("pi");
   }
 </script>
 
@@ -192,7 +186,7 @@
       {totalSkillsCount}
       onSelectView={handleSelectView}
       onSelectTool={handleSelectTool}
-      onNewPiConversation={handleNewPiConversation}
+      onProjectChange={refreshData}
     />
 
     <main class="main">
@@ -212,6 +206,7 @@
           {totalSkillsCount}
           onSelectView={handleSelectView}
           onOpenPiChat={handleOpenPiChat}
+          onProjectChange={refreshData}
         />
       </section>
 
