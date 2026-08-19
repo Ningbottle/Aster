@@ -7,6 +7,47 @@ const rootDir = path.resolve(__dirname, "..");
 const srcDir = path.resolve(rootDir, "src");
 const tauriSrcDir = path.resolve(rootDir, "src-tauri/src");
 
+// 0. 自检测试模式
+if (process.argv.includes("--selftest")) {
+  console.log("[CI Gate Selftest] Testing empty catch and constant true detection regexes...");
+  const multiLineEmptyCatchRegex = /catch\s*(\([a-zA-Z0-9_:\s]*\))?\s*\{[\s\n\r]*\}/m;
+  const trueHackRegex = /\|\|\s*true\b/;
+
+  const testCases = [
+    { code: "try { doStuff(); } catch (e) {}", shouldFail: true },
+    { code: "try { doStuff(); } catch (err) {\n  \n}", shouldFail: true },
+    { code: "try { doStuff(); } catch {\n\n}", shouldFail: true },
+    { code: "try { doStuff(); } catch (e: any) {\n  \n}", shouldFail: true },
+    { code: "try { doStuff(); } catch (e) { console.error(e); }", shouldFail: false },
+    { code: "const valid = flag || true;", shouldFail: true, testTrue: true },
+    { code: "const valid = flag || false;", shouldFail: false, testTrue: true },
+  ];
+
+  let testFailures = 0;
+  for (const tc of testCases) {
+    if (tc.testTrue) {
+      const match = trueHackRegex.test(tc.code);
+      if (match !== tc.shouldFail) {
+        console.error(`[FAIL] True hack regex failed on: ${tc.code}`);
+        testFailures++;
+      }
+    } else {
+      const match = multiLineEmptyCatchRegex.test(tc.code);
+      if (match !== tc.shouldFail) {
+        console.error(`[FAIL] Empty catch regex failed on: ${tc.code}`);
+        testFailures++;
+      }
+    }
+  }
+
+  if (testFailures === 0) {
+    console.log("[OK] CI Gate Selftest Passed: All regex edge cases verified.");
+    process.exit(0);
+  } else {
+    process.exit(1);
+  }
+}
+
 let failures = 0;
 
 function getAllFiles(dir, exts) {
@@ -68,18 +109,15 @@ for (const file of frontendFiles) {
   });
 }
 
-// 3. Empty catch blocks (swallowed errors) — regex without 'g' flag
-const emptyCatchRegex = /catch\s*(\([a-zA-Z0-9_]*\))?\s*\{\s*\}/;
+// 3. Multi-line & single-line empty catch blocks (swallowed errors)
+const multiLineEmptyCatchRegex = /catch\s*(\([a-zA-Z0-9_:\s]*\))?\s*\{[\s\n\r]*\}/m;
 for (const file of frontendFiles) {
   const content = fs.readFileSync(file, "utf8");
-  const lines = content.split("\n");
-  lines.forEach((line, idx) => {
-    if (line.includes("// nofake:allow")) return;
-    if (emptyCatchRegex.test(line)) {
-      console.error(`[FAIL] Empty catch block (swallowed error) found in ${path.relative(rootDir, file)}:${idx + 1} -> ${line.trim()}`);
-      failures++;
-    }
-  });
+  if (content.includes("// nofake:allow")) continue;
+  if (multiLineEmptyCatchRegex.test(content)) {
+    console.error(`[FAIL] Empty catch block (swallowed error) found in ${path.relative(rootDir, file)}`);
+    failures++;
+  }
 }
 
 if (failures === 0) {

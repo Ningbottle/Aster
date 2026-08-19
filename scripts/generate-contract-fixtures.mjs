@@ -121,6 +121,13 @@ const contractSamples = {
   PiSessionIndexRemoveArgs: {
     sessionId: "session-1",
   },
+  PiRuntimeSnapshotDto_sample: {
+    lifecycle: "ready",
+    hasLockedInstall: true,
+    projectPath: "C:\\Workspace\\project-a",
+    sessionId: "session-1",
+    runtimeInstanceId: 1,
+  },
   PiActiveSessionDto_sample: {
     runtimeInstanceId: 1,
     projectPath: "C:\\Workspace\\project-a",
@@ -198,6 +205,78 @@ const contractSamples = {
         path: "SKILL.md",
         status: "modified",
         diff_lines: ["- old line", "+ new line"],
+      },
+    ],
+  },
+  ProjectChooseArgs: {
+    path: "C:\\Workspace\\my-project",
+  },
+  ProjectSetActiveArgs: {
+    path: "C:\\Workspace\\my-project",
+  },
+  ProjectRemoveArgs: {
+    path: "C:\\Workspace\\my-project",
+  },
+  HostWorkdirSetArgs: {
+    host: "pi",
+    workdir: "C:\\Workspace\\my-project\\pi",
+  },
+  HostWorkdirGetArgs: {
+    host: "pi",
+  },
+  SkillsScanGithubArgs: {
+    repo: "anthropics/skills",
+    gitRef: "HEAD",
+    skillPath: "skills",
+  },
+  GithubDeviceStartArgs: {
+    clientId: "Ov23liAsterDesktop",
+  },
+  GithubDevicePollArgs: {
+    clientId: "Ov23liAsterDesktop",
+    deviceCode: "sample-device-code",
+  },
+  GithubSetPatArgs: {
+    pat: "ghp_mock_token_for_contract_test_12345",
+  },
+  SkillQuarantineDeleteArgs: {
+    quarantineId: "quarantine-snap-mock",
+  },
+  RecentProject_sample: {
+    path: "C:\\Workspace\\my-project",
+    display_name: "my-project",
+    last_opened_at: "2026-08-18T10:00:00Z",
+    is_active: true,
+  },
+  DeviceCodeResponse_sample: {
+    device_code: "dev123",
+    user_code: "ABCD-1234",
+    verification_uri: "https://github.com/login/device",
+    expires_in: 900,
+    interval: 5,
+  },
+  DevicePollResult_sample: {
+    status: "success",
+    error: null,
+  },
+  GithubAuthStatus_sample: {
+    has_token: true,
+    source: "Windows Credential Manager (aster.github)",
+  },
+  QuarantineItem_sample: {
+    id: 1,
+    quarantine_id: "quarantine-test",
+    source_info: "https://github.com/bad/repo",
+    reason: "Found dangerous executable",
+    quarantined_at: "2026-08-18T10:00:00Z",
+    quarantine_path: "C:\\Aster\\quarantine\\test",
+    total_findings: 1,
+    findings: [
+      {
+        relative_path: "run.exe",
+        finding_type: "banned_extension",
+        problem: "Executable binary detected",
+        line_number: null,
       },
     ],
   },
