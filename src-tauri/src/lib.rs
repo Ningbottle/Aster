@@ -5,6 +5,7 @@ pub mod evidence;
 pub mod host_profile;
 pub mod logging;
 pub mod pi_connector;
+pub mod pi_runtime;
 pub mod pi_sessions;
 pub mod skill_flow;
 pub mod supervisor;
@@ -12,10 +13,11 @@ pub mod supervisor;
 use dsh_connector::{DshRuntime, DshServer, DshStatus};
 use evidence::{Stage, Status};
 use pi_connector::{PiLaunchOptions, PiRuntime, PiSession, SessionEvent};
+use pi_runtime::{PiEventEnvelope, PiEventSink, PiRuntimeManager};
 use serde::Serialize;
 use skill_flow::M1_SKILL_SOURCE;
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tauri::{Emitter, Manager};
 
@@ -25,11 +27,6 @@ struct AppStatus {
     app_data_dir: String,
     database_schema_version: u32,
     evidence_count: i64,
-}
-
-/// 共享状态：单个活跃 Pi 会话（M1 单会话纵切）。
-struct SessionSlot {
-    session: Mutex<Option<PiSession>>,
 }
 
 /// 共享状态：单个活跃 DSH Web 服务实例（M2 纵切）。
@@ -107,155 +104,71 @@ fn locked_runtime() -> Result<PiRuntime, String> {
     ))
 }
 
-#[tauri::command]
-fn pi_session_status(state: tauri::State<SessionSlot>) -> Result<bool, String> {
-    let guard = state.session.lock().map_err(|e| format!("session lock failed: {e}"))?;
-    Ok(guard.as_ref().map(|s| !s.is_closed()).unwrap_or(false))
+#[allow(dead_code)]
+fn pi_event_sink(app: tauri::AppHandle) -> PiEventSink {
+    Arc::new(move |instance_id, event: SessionEvent| {
+        let session_id = app
+            .try_state::<PiRuntimeManager>()
+            .and_then(|mgr| mgr.session_id_if_instance(instance_id));
+        let _ = app.emit(
+            "pi-event",
+            PiEventEnvelope {
+                runtime_instance_id: instance_id,
+                session_id,
+                event_type: event.event_type,
+                summary: event.summary,
+                raw: event.raw,
+            },
+        );
+    })
 }
 
 #[tauri::command]
-fn pi_session_ensure(app: tauri::AppHandle, state: tauri::State<SessionSlot>) -> Result<String, String> {
-    let mut guard = state.session.lock().map_err(|e| format!("session lock failed: {e}"))?;
-    if let Some(session) = guard.as_ref() {
-        if !session.is_closed() {
-            return Ok("session already active".into());
-        }
-    }
-    let runtime = locked_runtime()?;
-    let (layout, _conn) = open_layout_and_db()?;
-    let workspace = pi_workspace(&layout);
-
-    if let Some(existing) = guard.as_mut() {
-        let _ = existing.stop();
-    }
-    let app_handle = app.clone();
-    let session = PiSession::start(
-        std::path::Path::new(&runtime.cli_js),
-        &workspace,
-        None, // 默认配置目录：Pi 自行使用自己的凭据与配置，Aster 不读取
-        &PiLaunchOptions::default(),
-        move |event: SessionEvent| {
-            let _ = app_handle.emit("pi-event", &event);
-        },
-    )
-    .map_err(|e| format!("start Pi RPC session failed: {e}"))?;
-    *guard = Some(session);
-    Ok("session started".into())
+fn pi_session_status(state: tauri::State<PiRuntimeManager>) -> Result<bool, String> {
+    Ok(state.active_binding().is_some())
 }
 
 #[tauri::command]
-fn pi_session_start(app: tauri::AppHandle, state: tauri::State<SessionSlot>) -> Result<String, String> {
-    let runtime = locked_runtime()?;
-    let (layout, _conn) = open_layout_and_db()?;
-    let workspace = pi_workspace(&layout);
-
-    let mut guard = state.session.lock().map_err(|e| format!("session lock failed: {e}"))?;
-    if let Some(existing) = guard.as_mut() {
-        let _ = existing.stop();
-    }
-    let app_handle = app.clone();
-    let session = PiSession::start(
-        std::path::Path::new(&runtime.cli_js),
-        &workspace,
-        None, // 默认配置目录：Pi 自行使用自己的凭据与配置，Aster 不读取
-        &PiLaunchOptions::default(),
-        move |event: SessionEvent| {
-            let _ = app_handle.emit("pi-event", &event);
-        },
-    )
-    .map_err(|e| format!("start Pi RPC session failed: {e}"))?;
-    *guard = Some(session);
-    Ok(format!(
-        "session started with managed Pi {}",
-        pi_connector::LOCKED_PI_VERSION
-    ))
+fn pi_get_available_models(
+    state: tauri::State<PiRuntimeManager>,
+) -> Result<Vec<serde_json::Value>, String> {
+    state.get_available_models()
 }
 
 #[tauri::command]
-fn pi_get_available_models(app: tauri::AppHandle, state: tauri::State<SessionSlot>) -> Result<Vec<serde_json::Value>, String> {
-    let _ = pi_session_ensure(app, state.clone())?;
-    let guard = state.session.lock().map_err(|e| format!("session lock failed: {e}"))?;
-    let session = guard.as_ref().ok_or("no active Pi session")?;
-    session.get_available_models()
+fn pi_set_model(
+    state: tauri::State<PiRuntimeManager>,
+    provider: String,
+    model_id: String,
+) -> Result<serde_json::Value, String> {
+    let snap = state.set_model(&provider, &model_id)?;
+    Ok(snap.state)
 }
 
 #[tauri::command]
-fn pi_set_model(state: tauri::State<SessionSlot>, provider: String, model_id: String) -> Result<serde_json::Value, String> {
-    let guard = state.session.lock().map_err(|e| format!("session lock failed: {e}"))?;
-    let session = guard.as_ref().ok_or("no active Pi session")?;
-    session.set_model(&provider, &model_id)
+fn pi_get_state(state: tauri::State<PiRuntimeManager>) -> Result<serde_json::Value, String> {
+    state.get_state()
 }
 
 #[tauri::command]
-fn pi_get_state(app: tauri::AppHandle, state: tauri::State<SessionSlot>) -> Result<serde_json::Value, String> {
-    let _ = pi_session_ensure(app, state.clone())?;
-    let guard = state.session.lock().map_err(|e| format!("session lock failed: {e}"))?;
-    let session = guard.as_ref().ok_or("no active Pi session")?;
-    session.get_state()
+fn pi_session_prompt(state: tauri::State<PiRuntimeManager>, message: String) -> Result<(), String> {
+    state.prompt(&message)
 }
 
 #[tauri::command]
-fn pi_new_session(state: tauri::State<SessionSlot>) -> Result<(), String> {
-    let guard = state.session.lock().map_err(|e| format!("session lock failed: {e}"))?;
-    let session = guard.as_ref().ok_or("no active Pi session")?;
-    session.new_session()
+fn pi_session_abort(state: tauri::State<PiRuntimeManager>) -> Result<String, String> {
+    let _ = state.abort()?;
+    Ok("cancellation requested".into())
 }
 
 #[tauri::command]
-fn pi_session_prompt(state: tauri::State<SessionSlot>, message: String) -> Result<(), String> {
-    let guard = state.session.lock().map_err(|e| format!("session lock failed: {e}"))?;
-    let session = guard.as_ref().ok_or("no active Pi session")?;
-    session.prompt(&message)
+fn pi_session_stop(state: tauri::State<PiRuntimeManager>) -> Result<(), String> {
+    state.stop()
 }
 
 #[tauri::command]
-fn pi_session_abort(state: tauri::State<SessionSlot>) -> Result<String, String> {
-    let watcher = {
-        let guard = state.session.lock().map_err(|e| format!("session lock failed: {e}"))?;
-        let session = guard.as_ref().ok_or("no active Pi session")?;
-        session.abort()?;
-        session.watcher()
-    };
-    // 锁已释放！其他命令（如 stop、observation）不会被阻塞
-    let confirmed = watcher.wait_settled(Duration::from_secs(30));
-    if confirmed {
-        Ok("cancellation confirmed by host (agent_settled)".into())
-    } else if watcher.is_closed() {
-        Ok("session process terminated or crashed before settle could be confirmed".into())
-    } else {
-        Ok("cancellation requested but host did not settle within 30s".into())
-    }
-}
-
-#[tauri::command]
-fn pi_session_stop(state: tauri::State<SessionSlot>) -> Result<(), String> {
-    let mut guard = state.session.lock().map_err(|e| format!("session lock failed: {e}"))?;
-    if let Some(mut session) = guard.take() {
-        session.stop().map_err(|e| e.to_string())?;
-    }
-    Ok(())
-}
-
-#[tauri::command]
-fn pi_session_observation(state: tauri::State<SessionSlot>) -> Result<serde_json::Value, String> {
-    let guard = state.session.lock().map_err(|e| format!("session lock failed: {e}"))?;
-    match guard.as_ref() {
-        Some(session) => {
-            let obs = session.observation();
-            Ok(serde_json::json!({
-                "active": !session.is_closed(),
-                "closed": session.is_closed(),
-                "tool_starts": obs.tool_starts,
-                "tool_ends": obs.tool_ends,
-                "tool_names": obs.tool_names,
-                "message_updates": obs.message_updates,
-                "agent_ends": obs.agent_ends,
-                "settled": obs.settled,
-                "protocol_errors": obs.protocol_errors,
-            }))
-        }
-        None => Ok(serde_json::json!({ "active": false, "closed": true })),
-    }
+fn pi_session_observation(state: tauri::State<PiRuntimeManager>) -> Result<serde_json::Value, String> {
+    state.observation_json()
 }
 
 /// 在测试作用域内用短生命周期 RPC 进程验证 skill 被目标宿主发现。
@@ -981,9 +894,7 @@ fn skill_batch_deploy_apply(snapshot_id: String, targets: Vec<skill_flow::Deploy
 
 pub fn run() {
     tauri::Builder::default()
-        .manage(SessionSlot {
-            session: Mutex::new(None),
-        })
+        .manage(PiRuntimeManager::default())
         .manage(DshSlot {
             server: Mutex::new(None),
         })
@@ -992,8 +903,6 @@ pub fn run() {
             pi_discover,
             pi_install_managed,
             pi_session_status,
-            pi_session_ensure,
-            pi_session_start,
             pi_session_prompt,
             pi_session_abort,
             pi_session_stop,
@@ -1001,7 +910,6 @@ pub fn run() {
             pi_get_available_models,
             pi_set_model,
             pi_get_state,
-            pi_new_session,
             dsh_discover,
             dsh_install_managed,
             dsh_start,

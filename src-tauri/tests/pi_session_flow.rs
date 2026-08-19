@@ -1,11 +1,15 @@
 //! Catalog and runtime binding tests for native Pi sessions.
 
+use aster_lib::pi_connector::PiRuntime;
+use aster_lib::pi_runtime::{FakePiController, PiOpenError, PiRuntimeManager};
 use aster_lib::pi_sessions::{
-    resolve_session_path, scan_session_root, scan_session_root_with_limits, PiCatalogError,
-    MAX_SESSION_FILES, MAX_SESSION_FILE_BYTES,
+    project_paths_equal, resolve_session_path, scan_session_root, scan_session_root_with_limits,
+    PiCatalogError, MAX_SESSION_FILES, MAX_SESSION_FILE_BYTES,
 };
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::Ordering;
+use std::sync::Arc;
 
 const VALID_SESSION: &str = concat!(
     r#"{"type":"session","version":3,"id":"s-1","timestamp":"2026-08-19T00:00:00Z","cwd":"C:/fixture/project-a"}"#,
@@ -132,4 +136,133 @@ fn catalog_resolve_rejects_traversal() {
         ),
         "traversal must be rejected, got {err}"
     );
+}
+
+fn dummy_runtime() -> PiRuntime {
+    PiRuntime {
+        version: "0.84.2".into(),
+        cli_js: r"C:\fixture\cli.js".into(),
+        managed: true,
+    }
+}
+
+fn sink() -> aster_lib::pi_runtime::PiEventSink {
+    Arc::new(|_, _| {})
+}
+
+fn write_session_file(dir: &Path, name: &str) -> PathBuf {
+    let path = dir.join(name);
+    fs::write(&path, "{}\n").unwrap();
+    path
+}
+
+#[test]
+fn binding_already_active_open_is_noop() {
+    let tmp = tempfile::tempdir().unwrap();
+    let project = tmp.path().join("proj-a");
+    fs::create_dir_all(&project).unwrap();
+    let a1 = write_session_file(&project, "a1.jsonl");
+    let ctrl = FakePiController::new();
+    let mgr = PiRuntimeManager::with_fake(Arc::clone(&ctrl));
+    let first = mgr
+        .open_session(&dummy_runtime(), &project, &a1, sink())
+        .unwrap();
+    let second = mgr
+        .open_session(&dummy_runtime(), &project, &a1, sink())
+        .unwrap();
+    assert_eq!(first.binding.instance_id, second.binding.instance_id);
+    assert_eq!(ctrl.starts.lock().unwrap().len(), 1);
+    assert!(ctrl.switches.lock().unwrap().is_empty());
+}
+
+#[test]
+fn binding_busy_rejects_switch_without_abort() {
+    let tmp = tempfile::tempdir().unwrap();
+    let project = tmp.path().join("proj-a");
+    fs::create_dir_all(&project).unwrap();
+    let a1 = write_session_file(&project, "a1.jsonl");
+    let a2 = write_session_file(&project, "a2.jsonl");
+    let ctrl = FakePiController::new();
+    let mgr = PiRuntimeManager::with_fake(Arc::clone(&ctrl));
+    mgr.open_session(&dummy_runtime(), &project, &a1, sink())
+        .unwrap();
+    ctrl.streaming.store(true, Ordering::SeqCst);
+    let err = mgr
+        .open_session(&dummy_runtime(), &project, &a2, sink())
+        .unwrap_err();
+    assert!(matches!(err, PiOpenError::Busy));
+    assert_eq!(ctrl.aborts.load(Ordering::SeqCst), 0);
+    assert!(ctrl.switches.lock().unwrap().is_empty());
+    assert_eq!(ctrl.starts.lock().unwrap().len(), 1);
+}
+
+#[test]
+fn binding_same_project_idle_uses_switch_session() {
+    let tmp = tempfile::tempdir().unwrap();
+    let project = tmp.path().join("proj-a");
+    fs::create_dir_all(&project).unwrap();
+    let a1 = write_session_file(&project, "a1.jsonl");
+    let a2 = write_session_file(&project, "a2.jsonl");
+    let ctrl = FakePiController::new();
+    let mgr = PiRuntimeManager::with_fake(Arc::clone(&ctrl));
+    mgr.open_session(&dummy_runtime(), &project, &a1, sink())
+        .unwrap();
+    let snap = mgr
+        .open_session(&dummy_runtime(), &project, &a2, sink())
+        .unwrap();
+    assert_eq!(snap.binding.session_id, "a2");
+    assert_eq!(ctrl.starts.lock().unwrap().len(), 1);
+    assert_eq!(ctrl.switches.lock().unwrap().as_slice(), &[a2]);
+    assert_eq!(ctrl.stops.load(Ordering::SeqCst), 0);
+}
+
+#[test]
+fn binding_cross_project_idle_restarts_with_target_cwd() {
+    let tmp = tempfile::tempdir().unwrap();
+    let project_a = tmp.path().join("proj-a");
+    let project_b = tmp.path().join("proj-b");
+    fs::create_dir_all(&project_a).unwrap();
+    fs::create_dir_all(&project_b).unwrap();
+    let a1 = write_session_file(&project_a, "a1.jsonl");
+    let b1 = write_session_file(&project_b, "b1.jsonl");
+    let ctrl = FakePiController::new();
+    let mgr = PiRuntimeManager::with_fake(Arc::clone(&ctrl));
+    let first = mgr
+        .open_session(&dummy_runtime(), &project_a, &a1, sink())
+        .unwrap();
+    let second = mgr
+        .open_session(&dummy_runtime(), &project_b, &b1, sink())
+        .unwrap();
+    assert_ne!(first.binding.instance_id, second.binding.instance_id);
+    assert!(project_paths_equal(
+        &second.binding.project_path,
+        &project_b
+    ));
+    let starts = ctrl.starts.lock().unwrap().clone();
+    assert_eq!(starts.len(), 2);
+    assert!(project_paths_equal(&starts[0].0, &project_a));
+    assert!(project_paths_equal(&starts[1].0, &project_b));
+    assert_eq!(starts[1].1.as_ref(), Some(&b1));
+    assert_eq!(ctrl.stops.load(Ordering::SeqCst), 1);
+}
+
+#[test]
+fn binding_failed_cross_project_start_leaves_no_false_binding() {
+    let tmp = tempfile::tempdir().unwrap();
+    let project_a = tmp.path().join("proj-a");
+    let project_b = tmp.path().join("proj-b");
+    fs::create_dir_all(&project_a).unwrap();
+    fs::create_dir_all(&project_b).unwrap();
+    let a1 = write_session_file(&project_a, "a1.jsonl");
+    let b1 = write_session_file(&project_b, "b1.jsonl");
+    let ctrl = FakePiController::new();
+    let mgr = PiRuntimeManager::with_fake(Arc::clone(&ctrl));
+    mgr.open_session(&dummy_runtime(), &project_a, &a1, sink())
+        .unwrap();
+    ctrl.fail_next_start.store(true, Ordering::SeqCst);
+    let err = mgr
+        .open_session(&dummy_runtime(), &project_b, &b1, sink())
+        .unwrap_err();
+    assert!(matches!(err, PiOpenError::StartFailed(_)));
+    assert!(mgr.active_binding().is_none());
 }
