@@ -246,11 +246,7 @@ fn bind_catalog_project(
             return Ok(rec.path.clone());
         }
     }
-    let identity = if entry.cwd.exists() {
-        normalize_project_path(&entry.cwd)
-    } else {
-        normalize_project_path(&entry.cwd)
-    };
+    let identity = normalize_project_path(&entry.cwd);
     if Path::new(&identity).is_dir() {
         let display = display_name_for(&identity);
         db::record_recent_project(conn, &identity, &display).map_err(|e| e.to_string())?;

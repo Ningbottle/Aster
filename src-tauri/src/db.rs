@@ -487,10 +487,10 @@ pub fn mark_pi_sessions_unseen(
     seen_session_ids: &[String],
 ) -> rusqlite::Result<usize> {
     if seen_session_ids.is_empty() {
-        return Ok(conn.execute(
+        return conn.execute(
             "UPDATE pi_session_index SET availability = 'missing' WHERE availability = 'available'",
             [],
-        )?);
+        );
     }
     let placeholders = seen_session_ids
         .iter()
