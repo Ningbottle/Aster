@@ -1,8 +1,8 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
-  import { renderMarkdown } from "../lib/markdown";
-  import GithubAuthModal from "../components/GithubAuthModal.svelte";
+  import { renderMarkdown } from "../../platform/markdown";
+  import GithubAuthModal from "./components/GithubAuthModal.svelte";
   import type {
     DiscoveredHost,
     DiscoveredSkillSummary,
@@ -15,7 +15,7 @@
     DeploymentTarget,
     GithubAuthStatus,
     QuarantineItem,
-  } from "../types";
+  } from "../../types";
 
   export let activeTool: string = "all";
   export let discoveredHosts: DiscoveredHost[] = [];

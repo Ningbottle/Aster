@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { piConsoleStore } from "../../lib/pi/piConsoleStore";
+  import { piConsoleStore } from "../store";
 
   const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
 

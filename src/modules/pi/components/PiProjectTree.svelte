@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { PiProjectNode } from "../../types";
+  import type { PiProjectNode } from "../../../types";
 
   export let projects: PiProjectNode[] = [];
   export let error: string | null = null;

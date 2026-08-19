@@ -1,7 +1,7 @@
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
   import { onMount, createEventDispatcher, onDestroy } from "svelte";
-  import type { DeviceCodeResponse, DevicePollResult, GithubAuthStatus } from "../types";
+  import type { DeviceCodeResponse, DevicePollResult, GithubAuthStatus } from "../../../types";
 
   export let show = false;
 

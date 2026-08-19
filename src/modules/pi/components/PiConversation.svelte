@@ -1,8 +1,8 @@
 <script lang="ts">
   import { tick } from "svelte";
-  import { renderMarkdown } from "../../lib/markdown";
-  import { piConsoleStore } from "../../lib/pi/piConsoleStore";
-  import type { PiMessage } from "../../types";
+  import { renderMarkdown } from "../../../platform/markdown";
+  import { piConsoleStore } from "../store";
+  import type { PiMessage } from "../../../types";
 
   let transcriptEl: HTMLElement;
   let stickToBottom = true;

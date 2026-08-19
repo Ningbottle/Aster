@@ -1,7 +1,7 @@
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
   import { onMount, createEventDispatcher } from "svelte";
-  import type { RecentProject } from "../types";
+  import type { RecentProject } from "../../types";
 
   export let activeProjectPath: string | null = null;
 

@@ -13,14 +13,14 @@
     SkillItem,
     ViewId,
   } from "./types";
-  import { piConsoleStore } from "./lib/pi/piConsoleStore";
+  import { piConsoleStore } from "./modules/pi/store";
 
-  import TitleBar from "./components/TitleBar.svelte";
-  import Sidebar from "./components/Sidebar.svelte";
+  import TitleBar from "./shell/TitleBar.svelte";
+  import Sidebar from "./shell/ModuleBar.svelte";
   import HomeView from "./views/HomeView.svelte";
-  import PiView from "./views/PiView.svelte";
-  import DshView from "./views/DshView.svelte";
-  import SkillsView from "./views/SkillsView.svelte";
+  import PiView from "./modules/pi/PiModule.svelte";
+  import DshView from "./modules/dsh/DshModule.svelte";
+  import SkillsView from "./modules/skills/SkillsModule.svelte";
   import AgentsView from "./views/AgentsView.svelte";
   import InfraView from "./views/InfraView.svelte";
 

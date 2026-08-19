@@ -2,9 +2,9 @@
   import { onMount } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
   import type { ViewId } from "../types";
-  import ProjectSelector from "./ProjectSelector.svelte";
-  import PiProjectTree from "./pi/PiProjectTree.svelte";
-  import { piConsoleStore } from "../lib/pi/piConsoleStore";
+  import ProjectSelector from "../modules/pi/ProjectSelector.svelte";
+  import PiProjectTree from "../modules/pi/components/PiProjectTree.svelte";
+  import { piConsoleStore } from "../modules/pi/store";
   import {
     clampSidebarWidth,
     isEditableTarget,
@@ -15,7 +15,7 @@
     PI_SIDEBAR_MIN,
     savePiSidebarHidden,
     savePiSidebarWidth,
-  } from "../lib/layout/sidebarPreferences";
+  } from "./sidebarPreferences";
 
   export let activeView: ViewId = "home";
   export let activeTool: string = "all";

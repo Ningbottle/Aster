@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { DshStatus, PiRuntime, ViewId } from "../types";
-  import ProjectSelector from "../components/ProjectSelector.svelte";
+  import ProjectSelector from "../modules/pi/ProjectSelector.svelte";
 
   export let piRuntimes: PiRuntime[] = [];
   export let dshStatus: DshStatus | null = null;

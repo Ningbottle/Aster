@@ -1,9 +1,9 @@
 <script lang="ts">
-  import PiSessionHeader from "../components/pi/PiSessionHeader.svelte";
-  import PiConversation from "../components/pi/PiConversation.svelte";
-  import PiComposer from "../components/pi/PiComposer.svelte";
-  import { piConsoleStore } from "../lib/pi/piConsoleStore";
-  import type { PiRuntime } from "../types";
+  import PiSessionHeader from "./components/PiSessionHeader.svelte";
+  import PiConversation from "./components/PiConversation.svelte";
+  import PiComposer from "./components/PiComposer.svelte";
+  import { piConsoleStore } from "./store";
+  import type { PiRuntime } from "../../types";
 
   export let piRuntimes: PiRuntime[] = [];
   export let onRefresh: () => Promise<void>;

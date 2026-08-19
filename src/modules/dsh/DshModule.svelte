@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { invoke } from "@tauri-apps/api/core";
-  import type { DshRuntime, DshStatus } from "../types";
+  import type { DshRuntime, DshStatus } from "../../types";
+  import { dshApi } from "./api";
 
   export let dshRuntimes: DshRuntime[] = [];
   export let dshStatus: DshStatus | null = null;
@@ -34,7 +34,7 @@
     installingDsh = true;
     installMsg = "正在安装 DeepSeek Harness 0.1.0-rc.6 到 Aster 管理目录...";
     try {
-      await invoke<DshRuntime>("dsh_install_managed", { version: "0.1.0-rc.6" });
+      await dshApi.installManaged("0.1.0-rc.6");
       installMsg = "成功安装 Managed DSH 0.1.0-rc.6";
       await onRefresh();
       await startDshServer();
@@ -50,7 +50,7 @@
     starting = true;
     errorMsg = "";
     try {
-      dshStatus = await invoke<DshStatus>("dsh_start", { port: 38472 });
+      dshStatus = await dshApi.start(38472);
       await onRefresh();
     } catch (e) {
       errorMsg = `启动 DSH 失败: ${e}`;
@@ -63,7 +63,7 @@
     if (!isRunning || stopping) return;
     stopping = true;
     try {
-      await invoke("dsh_stop");
+      await dshApi.stop();
       dshStatus = null;
       await onRefresh();
     } catch (e) {
@@ -75,7 +75,7 @@
 
   async function openExternalWindow() {
     try {
-      await invoke("dsh_open_window");
+      await dshApi.openWindow();
     } catch (e) {
       errorMsg = `打开独立窗口失败: ${e}`;
     }

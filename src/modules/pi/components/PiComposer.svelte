@@ -1,6 +1,6 @@
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
-  import { piConsoleStore } from "../../lib/pi/piConsoleStore";
+  import { piConsoleStore } from "../store";
 
   export let hasPi = false;
   export let onRefresh: () => Promise<void>;
