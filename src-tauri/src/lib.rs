@@ -21,7 +21,6 @@ pub use pi::connector as pi_connector;
 pub use pi::runtime as pi_runtime;
 pub use pi::sessions as pi_sessions;
 pub use dsh::connector as dsh_connector;
-pub use skills::skill_flow;
 
 pub fn run() {
     ipc::boot::run()
