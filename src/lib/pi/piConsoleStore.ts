@@ -1,5 +1,12 @@
 import { get, writable } from "svelte/store";
-import type { PiActiveSession, PiEventEnvelope, PiMessage, PiModel, PiProjectNode } from "../../types";
+import type {
+  PiActiveSession,
+  PiEventEnvelope,
+  PiMessage,
+  PiModel,
+  PiProjectNode,
+  PiRuntimeSnapshot,
+} from "../../types";
 import { piApi } from "./api";
 import {
   isIgnorableResyncError,
@@ -30,6 +37,7 @@ export type PiConsoleState = {
   availableModels: PiModel[];
   modelsError: string | null;
   busyOffer: { projectPath: string; sessionId: string } | null;
+  runtime: PiRuntimeSnapshot | null;
 };
 
 const initial: PiConsoleState = {
@@ -43,6 +51,7 @@ const initial: PiConsoleState = {
   availableModels: [],
   modelsError: null,
   busyOffer: null,
+  runtime: null,
 };
 
 function statusFromActive(active: PiActiveSession | null): PiSessionStatus {
@@ -88,6 +97,25 @@ function createStore() {
     }
   }
 
+  async function refreshRuntime(): Promise<void> {
+    try {
+      const runtime = await piApi.runtimeSnapshot();
+      update((s) => ({ ...s, runtime }));
+    } catch (err) {
+      update((s) => ({
+        ...s,
+        runtime: {
+          lifecycle: "unknown",
+          hasLockedInstall: false,
+          projectPath: null,
+          sessionId: null,
+          runtimeInstanceId: null,
+        },
+        error: s.error ?? toError(err),
+      }));
+    }
+  }
+
   async function loadModels(): Promise<void> {
     try {
       const availableModels = await piApi.availableModels();
@@ -112,6 +140,7 @@ function createStore() {
       update((s) => applySnapshot(s, active));
       await refreshTree();
       await loadModels();
+      await refreshRuntime();
     } catch (err) {
       const message = toError(err);
       if (message === "busy") {
@@ -135,6 +164,7 @@ function createStore() {
       update((s) => applySnapshot(s, active));
       await refreshTree();
       await loadModels();
+      await refreshRuntime();
     } catch (err) {
       const message = toError(err);
       if (message === "busy") {
@@ -304,6 +334,7 @@ function createStore() {
         sessionStatus: "closed",
         availableModels: [],
       }));
+      await refreshRuntime();
     } catch (err) {
       update((s) => ({ ...s, error: toError(err) }));
       throw err;
@@ -385,6 +416,7 @@ function createStore() {
     acceptEvent,
     dismissBusy,
     loadModels,
+    refreshRuntime,
     snapshot,
     removeIndexedSession,
     reportError,

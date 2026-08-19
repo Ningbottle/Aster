@@ -19,4 +19,6 @@ export const piApi = {
   removeIndex: (sessionId: string) =>
     invoke<PiProjectNode[]>("pi_session_index_remove", { sessionId }),
   availableModels: () => invoke<import("../../types").PiModel[]>("pi_get_available_models"),
+  runtimeSnapshot: () =>
+    invoke<import("../../types").PiRuntimeSnapshot>("pi_runtime_snapshot"),
 };

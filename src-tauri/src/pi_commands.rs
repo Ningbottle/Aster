@@ -1,7 +1,9 @@
 //! Typed Pi project/session Tauri commands. DTOs never include native session files.
 
 use crate::db::{self, PiSessionIndexRecord};
-use crate::pi_runtime::{PiActiveSnapshot, PiEventEnvelope, PiOpenError, PiRuntimeManager};
+use crate::pi_runtime::{
+    PiActiveSnapshot, PiEventEnvelope, PiOpenError, PiRuntimeManager, PiRuntimeSnapshotDto,
+};
 use crate::pi_sessions::{
     default_session_root, normalize_project_path, project_paths_equal, relative_locator,
     resolve_session_path, scan_session_root, PiSessionCatalogEntry,
@@ -249,6 +251,12 @@ pub fn pi_session_stop(state: State<PiRuntimeManager>) -> Result<(), String> {
 }
 
 #[tauri::command]
+pub fn pi_runtime_snapshot(state: State<PiRuntimeManager>) -> Result<PiRuntimeSnapshotDto, String> {
+    let has_locked_install = crate::locked_runtime().is_ok();
+    Ok(state.runtime_snapshot(has_locked_install))
+}
+
+#[tauri::command]
 pub fn pi_session_index_remove(
     state: State<PiRuntimeManager>,
     session_id: String,
@@ -341,6 +349,7 @@ fn persist_snapshot(snap: &PiActiveSnapshot) -> Result<(), String> {
     if Path::new(&project).is_dir() {
         db::record_recent_project(&conn, &project, &display_name_for(&project))
             .map_err(|e| e.to_string())?;
+        db::set_active_project(&conn, &project).map_err(|e| e.to_string())?;
     }
     let root = default_session_root().map_err(|e| e.to_string())?;
     let Some(rel) = snap

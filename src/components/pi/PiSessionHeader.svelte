@@ -9,16 +9,23 @@
   $: active = $piConsoleStore.active;
   $: models = $piConsoleStore.availableModels;
   $: busy = !!(active && (active.isStreaming || active.isCompacting));
-  $: statusLabel = statusText($piConsoleStore.sessionStatus, $piConsoleStore.modelsError);
+  $: statusLabel = statusText(
+    $piConsoleStore.sessionStatus,
+    $piConsoleStore.runtime?.lifecycle ?? null,
+  );
 
-  function statusText(status: string, modelsError: string | null): string {
-    if (status === "starting") return "Starting";
-    if (status === "streaming") return "Running";
+  function statusText(status: string, lifecycle: string | null): string {
+    if (status === "starting" || lifecycle === "starting") return "Starting";
+    if (status === "streaming" || lifecycle === "busy") return "Running";
     if (status === "compacting") return "Compacting";
     if (status === "error") return "Error";
-    if (modelsError) return "Needs setup";
-    if (status === "idle") return "Ready";
-    return "Needs setup";
+    if (lifecycle === "crashed") return "Error";
+    if (lifecycle === "stopping") return "Stopping";
+    if (lifecycle === "needsSetup") return "Needs setup";
+    if (status === "idle" || lifecycle === "ready") return "Ready";
+    if (lifecycle === "unknown") return "Unknown";
+    if (status === "closed" || lifecycle === "closed") return "Ready";
+    return "Unknown";
   }
 
   async function onModelChange(e: Event) {

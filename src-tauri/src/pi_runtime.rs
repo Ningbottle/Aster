@@ -18,6 +18,66 @@ pub struct PiActiveBinding {
     pub session_id: String,
 }
 
+/// Whether a global Project mutation may proceed while a Pi session is bound.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ActivateProjectDecision {
+    Proceed,
+    Noop,
+}
+
+pub fn project_binding_display(binding: &PiActiveBinding) -> String {
+    binding
+        .project_path
+        .file_name()
+        .map(|s| s.to_string_lossy().into_owned())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "当前项目".into())
+}
+
+pub fn active_session_blocks_project_change(binding: &PiActiveBinding) -> String {
+    let display = project_binding_display(binding);
+    format!(
+        "当前存在活动 Pi Session，绑定项目为「{display}」。已保留该 Session。如需切换或清除项目，请先在 Pi 中停止 Session，再重新操作。"
+    )
+}
+
+/// Activate another global project. Same path as the live binding is a no-op.
+pub fn decide_activate_project(
+    binding: Option<&PiActiveBinding>,
+    next: &Path,
+) -> Result<ActivateProjectDecision, String> {
+    match binding {
+        None => Ok(ActivateProjectDecision::Proceed),
+        Some(b) if project_paths_equal(&b.project_path, next) => {
+            Ok(ActivateProjectDecision::Noop)
+        }
+        Some(b) => Err(active_session_blocks_project_change(b)),
+    }
+}
+
+/// Removing the bound project from recents / clearing it is refused.
+pub fn decide_remove_project(
+    binding: Option<&PiActiveBinding>,
+    removing: &Path,
+) -> Result<(), String> {
+    match binding {
+        Some(b) if project_paths_equal(&b.project_path, removing) => {
+            Err(active_session_blocks_project_change(b))
+        }
+        _ => Ok(()),
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct PiRuntimeSnapshotDto {
+    pub lifecycle: String,
+    pub has_locked_install: bool,
+    pub project_path: Option<String>,
+    pub session_id: Option<String>,
+    pub runtime_instance_id: Option<u64>,
+}
+
 #[derive(Debug, Clone)]
 pub struct PiActiveSnapshot {
     pub binding: PiActiveBinding,
@@ -159,6 +219,7 @@ struct ActivePiRuntime {
     session_path: Option<PathBuf>,
     session: Arc<dyn PiProcess>,
     published_session_id: Arc<Mutex<String>>,
+    last_busy: bool,
 }
 
 pub struct PiRuntimeManager {
@@ -195,6 +256,52 @@ impl PiRuntimeManager {
             return None;
         }
         Some(binding_of(active))
+    }
+
+    pub fn runtime_snapshot(&self, has_locked_install: bool) -> PiRuntimeSnapshotDto {
+        let guard = match self.active.lock() {
+            Ok(g) => g,
+            Err(_) => {
+                return PiRuntimeSnapshotDto {
+                    lifecycle: "unknown".into(),
+                    has_locked_install,
+                    project_path: None,
+                    session_id: None,
+                    runtime_instance_id: None,
+                };
+            }
+        };
+        match guard.as_ref() {
+            None => PiRuntimeSnapshotDto {
+                lifecycle: if has_locked_install {
+                    "closed".into()
+                } else {
+                    "needsSetup".into()
+                },
+                has_locked_install,
+                project_path: None,
+                session_id: None,
+                runtime_instance_id: None,
+            },
+            Some(active) if active.session.is_closed() => PiRuntimeSnapshotDto {
+                lifecycle: "crashed".into(),
+                has_locked_install,
+                project_path: Some(active.project_path.to_string_lossy().into_owned()),
+                session_id: Some(active.session_id.clone()),
+                runtime_instance_id: Some(active.instance_id),
+            },
+            Some(active) => PiRuntimeSnapshotDto {
+                lifecycle: if active.last_busy {
+                    "busy".into()
+                } else {
+                    "ready".into()
+                },
+                has_locked_install,
+                project_path: Some(active.project_path.to_string_lossy().into_owned()),
+                session_id: Some(active.session_id.clone()),
+                runtime_instance_id: Some(active.instance_id),
+            },
+        }
     }
 
     pub fn create_session(
@@ -476,6 +583,7 @@ impl PiRuntimeManager {
             session_path: fetched.session_path.clone().or(session_path),
             session,
             published_session_id,
+            last_busy: state_busy(&fetched.state),
         };
         publish_session_id(&active.published_session_id, &active.session_id);
         let snap = snapshot_from(&active, fetched);
@@ -601,6 +709,7 @@ fn apply_fetched(active: &mut ActivePiRuntime, fetched: &FetchedSnapshot) {
         publish_session_id(&active.published_session_id, &active.session_id);
     }
     active.session_path = fetched.session_path.clone();
+    active.last_busy = state_busy(&fetched.state);
 }
 
 fn snapshot_from(active: &ActivePiRuntime, fetched: FetchedSnapshot) -> PiActiveSnapshot {
