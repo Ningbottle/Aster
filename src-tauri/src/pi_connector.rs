@@ -32,7 +32,6 @@ pub struct PiRuntime {
     pub managed: bool,
 }
 
-
 /// 把 "x.y.z(-pre)" 解析为可比较的数值元组；解析失败回退 (0,0,0)。
 fn version_key(v: &str) -> (u64, u64, u64) {
     let core = v.split('-').next().unwrap_or(v);
@@ -163,7 +162,11 @@ fn probe_external_version(shim: &Path) -> Option<String> {
         .unwrap_or("")
         .trim()
         .to_string();
-    if crate::supervisor::is_safe_version(&first_line) { Some(first_line) } else { None }
+    if crate::supervisor::is_safe_version(&first_line) {
+        Some(first_line)
+    } else {
+        None
+    }
 }
 
 /// 解析后的服务端行。
@@ -234,7 +237,12 @@ pub struct SessionObservation {
 impl SessionObservation {
     pub fn observe(&mut self, line: &ServerLine) {
         match line {
-            ServerLine::Response { command, success, error, .. } => {
+            ServerLine::Response {
+                command,
+                success,
+                error,
+                ..
+            } => {
                 if !success {
                     self.protocol_errors
                         .push(format!("{command}: {}", error.clone().unwrap_or_default()));
@@ -269,7 +277,6 @@ impl SessionObservation {
         }
     }
 }
-
 
 /// 会话观察句柄：持有 PiSession 内部状态的 Arc，可以在不持有会话锁的
 /// 情况下等待 settled / 读取观察快照。
@@ -349,12 +356,12 @@ impl PiSession {
             let reader = BufReader::new(stdout);
             for line in reader.lines() {
                 let Ok(line) = line else { break };
-                let Some(parsed) = parse_server_line(&line) else { continue };
+                let Some(parsed) = parse_server_line(&line) else {
+                    continue;
+                };
                 if let ServerLine::Response { .. } = &parsed {
-                    let obj: Value = serde_json::from_str(
-                        line.strip_suffix('\r').unwrap_or(&line),
-                    )
-                    .unwrap_or(Value::Null);
+                    let obj: Value = serde_json::from_str(line.strip_suffix('\r').unwrap_or(&line))
+                        .unwrap_or(Value::Null);
                     if let Some(id) = obj.get("id").and_then(Value::as_str) {
                         if let Some(tx) = reader_pending.lock().unwrap().remove(id) {
                             let _ = tx.send(obj);
@@ -411,7 +418,8 @@ impl PiSession {
         body["id"] = json!(id);
         let (tx, rx) = std::sync::mpsc::channel();
         self.pending.lock().unwrap().insert(id.clone(), tx);
-        self.send_raw(&body).map_err(|e| format!("send failed: {e}"))?;
+        self.send_raw(&body)
+            .map_err(|e| format!("send failed: {e}"))?;
         match rx.recv_timeout(timeout) {
             Ok(v) => Ok(v),
             Err(_) => {
@@ -423,18 +431,16 @@ impl PiSession {
 
     /// 查询当前可用模型列表。
     pub fn get_available_models(&self) -> Result<Vec<Value>, String> {
-        let resp = self.request(json!({ "type": "get_available_models" }), Duration::from_secs(30))?;
-        if resp.get("success").and_then(Value::as_bool) == Some(true) {
-            let models = resp
-                .get("data")
-                .and_then(|d| d.get("models"))
-                .and_then(Value::as_array)
-                .cloned()
-                .unwrap_or_default();
-            Ok(models)
-        } else {
-            Err(resp.get("error").and_then(Value::as_str).unwrap_or("get_available_models failed").to_string())
-        }
+        let resp = self.request(
+            json!({ "type": "get_available_models" }),
+            Duration::from_secs(30),
+        )?;
+        let data = response_data(resp, "get_available_models")?;
+        Ok(data
+            .get("models")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default())
     }
 
     /// 切换模型。
@@ -443,31 +449,19 @@ impl PiSession {
             json!({ "type": "set_model", "provider": provider, "modelId": model_id }),
             Duration::from_secs(30),
         )?;
-        if resp.get("success").and_then(Value::as_bool) == Some(true) {
-            Ok(resp.get("data").cloned().unwrap_or(Value::Null))
-        } else {
-            Err(resp.get("error").and_then(Value::as_str).unwrap_or("set_model failed").to_string())
-        }
+        response_data(resp, "set_model")
     }
 
     /// 获取会话当前状态（模型、thinkingLevel 等）。
     pub fn get_state(&self) -> Result<Value, String> {
         let resp = self.request(json!({ "type": "get_state" }), Duration::from_secs(30))?;
-        if resp.get("success").and_then(Value::as_bool) == Some(true) {
-            Ok(resp.get("data").cloned().unwrap_or(Value::Null))
-        } else {
-            Err(resp.get("error").and_then(Value::as_str).unwrap_or("get_state failed").to_string())
-        }
+        response_data(resp, "get_state")
     }
 
     /// 开启新会话。
     pub fn new_session(&self) -> Result<(), String> {
         let resp = self.request(json!({ "type": "new_session" }), Duration::from_secs(30))?;
-        if resp.get("success").and_then(Value::as_bool) == Some(true) {
-            Ok(())
-        } else {
-            Err(resp.get("error").and_then(Value::as_str).unwrap_or("new_session failed").to_string())
-        }
+        response_data(resp, "new_session").map(|_| ())
     }
 
     /// 发送 prompt。成功只表示被接受；后续失败通过事件呈现。
@@ -481,15 +475,7 @@ impl PiSession {
             json!({ "type": "prompt", "message": message }),
             Duration::from_secs(60),
         )?;
-        if resp.get("success").and_then(Value::as_bool) == Some(true) {
-            Ok(())
-        } else {
-            Err(resp
-                .get("error")
-                .and_then(Value::as_str)
-                .unwrap_or("prompt rejected")
-                .to_string())
-        }
+        response_data(resp, "prompt").map(|_| ())
     }
 
     /// 请求取消。真实 0.84.2 不保证回显 abort 响应，因此这里只发送请求；
@@ -497,7 +483,8 @@ impl PiSession {
     pub fn abort(&self) -> Result<(), String> {
         self.observation.lock().unwrap().abort_requested = true;
         let body = json!({ "type": "abort" });
-        self.send_raw(&body).map_err(|e| format!("send failed: {e}"))
+        self.send_raw(&body)
+            .map_err(|e| format!("send failed: {e}"))
     }
 
     /// 获取可独立持有的观察句柄，用于在会话锁之外等待状态变化。
@@ -523,6 +510,21 @@ impl Drop for PiSession {
     fn drop(&mut self) {
         let _ = self.stop();
     }
+}
+
+fn response_data(resp: Value, expected: &str) -> Result<Value, String> {
+    let command = resp.get("command").and_then(Value::as_str).unwrap_or("");
+    if command != expected {
+        return Err(format!("expected {expected} response, received {command}"));
+    }
+    if resp.get("success").and_then(Value::as_bool) != Some(true) {
+        return Err(resp
+            .get("error")
+            .and_then(Value::as_str)
+            .unwrap_or("Pi RPC request failed")
+            .to_string());
+    }
+    Ok(resp.get("data").cloned().unwrap_or(Value::Null))
 }
 
 fn summarize_event(event_type: &str, raw: &Value) -> String {
@@ -585,10 +587,18 @@ mod tests {
     #[test]
     fn normal_fixture_shows_streaming_tools_and_settled() {
         let obs = observe_fixture("normal.jsonl");
-        assert!(obs.message_updates > 10, "应有大量流式 message_update，实际 {}", obs.message_updates);
+        assert!(
+            obs.message_updates > 10,
+            "应有大量流式 message_update，实际 {}",
+            obs.message_updates
+        );
         assert!(obs.tool_starts >= 1);
         assert_eq!(obs.tool_starts, obs.tool_ends);
-        assert!(obs.tool_names.iter().any(|t| t == "bash"), "{:?}", obs.tool_names);
+        assert!(
+            obs.tool_names.iter().any(|t| t == "bash"),
+            "{:?}",
+            obs.tool_names
+        );
         assert!(obs.settled, "正常会话必须以 agent_settled 结束");
         assert!(obs.protocol_errors.is_empty(), "{:?}", obs.protocol_errors);
     }
@@ -607,9 +617,15 @@ mod tests {
     fn error_fixture_collects_protocol_errors() {
         let obs = observe_fixture("error.jsonl");
         assert_eq!(obs.protocol_errors.len(), 3, "{:?}", obs.protocol_errors);
-        assert!(obs.protocol_errors.iter().any(|e| e.contains("Unknown command")));
+        assert!(obs
+            .protocol_errors
+            .iter()
+            .any(|e| e.contains("Unknown command")));
         assert!(obs.protocol_errors.iter().any(|e| e.contains("No API key")));
-        assert!(obs.protocol_errors.iter().any(|e| e.contains("Model not found")));
+        assert!(obs
+            .protocol_errors
+            .iter()
+            .any(|e| e.contains("Model not found")));
         assert!(!obs.settled);
     }
 
@@ -621,10 +637,38 @@ mod tests {
     }
 
     #[test]
+    fn session_lifecycle_fixture_matches_locked_0842_contract() {
+        let lines = load_fixture("session-lifecycle.jsonl");
+        let values: Vec<Value> = lines
+            .into_iter()
+            .map(|line| serde_json::from_str(&line).unwrap())
+            .collect();
+
+        let state = response_data(values[0].clone(), "get_state").unwrap();
+        assert_eq!(state["sessionId"], "session-1");
+        assert_eq!(state["thinkingLevel"], "medium");
+        assert_eq!(state["isStreaming"], false);
+
+        let messages = response_data(values[1].clone(), "get_messages").unwrap();
+        assert_eq!(messages["messages"].as_array().unwrap().len(), 2);
+
+        let stats = response_data(values[2].clone(), "get_session_stats").unwrap();
+        assert_eq!(stats["contextUsage"]["percent"], 2);
+
+        let switched = response_data(values[3].clone(), "switch_session").unwrap();
+        assert_eq!(switched["cancelled"], false);
+        response_data(values[4].clone(), "set_thinking_level").unwrap();
+        response_data(values[5].clone(), "set_session_name").unwrap();
+        assert!(response_data(values[0].clone(), "get_messages").is_err());
+    }
+
+    #[test]
     fn parse_is_strict_jsonl() {
         assert!(parse_server_line("").is_none());
         assert!(parse_server_line("not json").is_none());
-        let resp = parse_server_line("{\"type\":\"response\",\"command\":\"abort\",\"success\":true}\r\n").unwrap();
+        let resp =
+            parse_server_line("{\"type\":\"response\",\"command\":\"abort\",\"success\":true}\r\n")
+                .unwrap();
         assert_eq!(
             resp,
             ServerLine::Response {
