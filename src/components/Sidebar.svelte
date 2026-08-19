@@ -248,10 +248,6 @@
     class:dragging={isDragging}
     title="拖拽或用方向键调整侧边栏宽度"
     aria-label="调整侧边栏宽度"
-    aria-orientation="vertical"
-    aria-valuemin={isPi ? PI_SIDEBAR_MIN : isSkills ? 140 : 200}
-    aria-valuemax={isPi ? PI_SIDEBAR_MAX : isSkills ? 300 : 420}
-    aria-valuenow={currentWidth}
     on:pointerdown={handleResizeStart}
     on:keydown={(e) => {
       if (e.key === "ArrowLeft") {

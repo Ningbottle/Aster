@@ -9,7 +9,6 @@
     DshRuntime,
     DshStatus,
     PiEventEnvelope,
-    PiObservation,
     PiRuntime,
     SkillItem,
     ViewId,
@@ -51,10 +50,8 @@
   let discoveredHosts: DiscoveredHost[] = [];
   let skillStatus: Record<string, unknown> | null = null;
   let skills: SkillItem[] = [];
-  let observation: PiObservation | null = null;
   let lastBackendError: string | null = null;
 
-  let piViewRef: PiView;
   let dshViewRef: DshView;
   let skillsViewRef: SkillsView;
   let unlisten: (() => void) | null = null;
@@ -70,7 +67,6 @@
     try {
       status = await invoke<AppStatus>("get_app_status");
       piRuntimes = await invoke<PiRuntime[]>("pi_discover");
-      observation = await invoke<PiObservation>("pi_session_observation");
       skillStatus = await invoke("skill_status");
       dshRuntimes = await invoke<DshRuntime[]>("dsh_discover");
       dshStatus = await invoke<DshStatus | null>("dsh_status");
@@ -213,9 +209,7 @@
       <!-- 视图 2：Pi 工作台 -->
       <section class="view" class:active={activeView === "pi"}>
         <PiView
-          bind:this={piViewRef}
           {piRuntimes}
-          {observation}
           onRefresh={refreshData}
         />
       </section>
