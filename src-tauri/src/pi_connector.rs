@@ -1,4 +1,4 @@
-//! PiConnector（M1）：严格 JSONL RPC 会话（content.md §6）。
+//! PiConnector：严格 JSONL RPC 会话。
 //!
 //! 只通过 `pi --mode rpc` 的 stdin/stdout JSONL 与 Pi 交互，不存在第二种
 //! Pi 接入路线。协议事实来自 0.84.2 的真实采集 fixtures
@@ -470,8 +470,9 @@ impl PiSession {
     }
 
     /// 获取会话当前状态（模型、thinkingLevel 等）。
+    /// 冷启动含进程拉起，0.84.2 实测约 30–37s，不能用 30s RPC 超时。
     pub fn get_state(&self) -> Result<Value, String> {
-        let resp = self.request(json!({ "type": "get_state" }), Duration::from_secs(30))?;
+        let resp = self.request(json!({ "type": "get_state" }), Duration::from_secs(90))?;
         response_data(resp, "get_state")
     }
 
