@@ -2,6 +2,7 @@ import type { PiEventEnvelope, PiMessage } from "../../types";
 
 export type PiConversationState = {
   runtimeInstanceId: number;
+  sessionId: string;
   messages: PiMessage[];
   streamingText: string;
 };
@@ -34,6 +35,9 @@ export function reducePiEvent(
   if (event.runtimeInstanceId !== state.runtimeInstanceId) {
     return state;
   }
+  if (event.sessionId && event.sessionId !== state.sessionId) {
+    return state;
+  }
   if (event.eventType === "agent_start") {
     return { ...state, streamingText: "" };
   }
@@ -45,15 +49,7 @@ export function reducePiEvent(
     return state;
   }
   if (event.eventType === "agent_end" || event.eventType === "agent_settled") {
-    const text = state.streamingText;
-    if (!text) {
-      return { ...state, streamingText: "" };
-    }
-    return {
-      ...state,
-      streamingText: "",
-      messages: [...state.messages, { role: "assistant", content: text }],
-    };
+    return { ...state, streamingText: "" };
   }
   return state;
 }

@@ -16,5 +16,7 @@ export const piApi = {
   prompt: (message: string) => invoke<void>("pi_session_prompt", { message }),
   abort: () => invoke<PiActiveSession>("pi_session_abort"),
   stop: () => invoke<void>("pi_session_stop"),
+  removeIndex: (sessionId: string) =>
+    invoke<PiProjectNode[]>("pi_session_index_remove", { sessionId }),
   availableModels: () => invoke<import("../../types").PiModel[]>("pi_get_available_models"),
 };

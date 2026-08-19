@@ -68,6 +68,8 @@ function toError(err: unknown): string {
 function createStore() {
   const { subscribe, update, set } = writable<PiConsoleState>(initial);
 
+  let settleSync: Promise<void> | null = null;
+
   async function refreshTree(): Promise<void> {
     update((s) => ({ ...s, treeStatus: "loading", error: s.treeStatus === "error" ? s.error : null }));
     try {
@@ -75,7 +77,6 @@ function createStore() {
       update((s) => ({ ...s, tree, treeStatus: "ready" }));
     } catch (err) {
       update((s) => ({ ...s, treeStatus: "error", error: toError(err) }));
-      throw err;
     }
   }
 
@@ -115,7 +116,7 @@ function createStore() {
         return;
       }
       update((s) => ({ ...s, sessionStatus: "error", error: message }));
-      throw err;
+      await refreshTree();
     }
   }
 
@@ -138,7 +139,7 @@ function createStore() {
         return;
       }
       update((s) => ({ ...s, sessionStatus: "error", error: message }));
-      throw err;
+      await refreshTree();
     }
   }
 
@@ -174,9 +175,17 @@ function createStore() {
   }
 
   async function prompt(message: string): Promise<void> {
+    const text = message.trim();
+    if (!text) return;
+    update((s) => ({
+      ...s,
+      error: null,
+      sessionStatus: "streaming",
+      streamingText: "",
+      messages: [...s.messages, { role: "user", content: text }],
+    }));
     try {
-      update((s) => ({ ...s, error: null, sessionStatus: "streaming" }));
-      await piApi.prompt(message);
+      await piApi.prompt(text);
     } catch (err) {
       update((s) => ({
         ...s,
@@ -197,6 +206,37 @@ function createStore() {
     }
   }
 
+  async function resyncFromNative(): Promise<void> {
+    if (settleSync) {
+      await settleSync;
+      return;
+    }
+    settleSync = (async () => {
+      try {
+        const active = await piApi.snapshot();
+        update((s) => applySnapshot(s, active));
+      } catch (err) {
+        update((s) => ({ ...s, error: toError(err) }));
+      } finally {
+        settleSync = null;
+      }
+    })();
+    await settleSync;
+  }
+
+  async function removeIndexedSession(sessionId: string): Promise<void> {
+    try {
+      const tree = await piApi.removeIndex(sessionId);
+      update((s) => ({ ...s, tree, treeStatus: "ready" }));
+    } catch (err) {
+      update((s) => ({ ...s, error: toError(err) }));
+    }
+  }
+
+  function reportError(err: unknown): void {
+    update((s) => ({ ...s, error: toError(err) }));
+  }
+
   async function stop(): Promise<void> {
     try {
       await piApi.stop();
@@ -215,28 +255,37 @@ function createStore() {
   }
 
   function acceptEvent(event: PiEventEnvelope): void {
+    let shouldResync = false;
     update((s) => {
       if (!s.active || event.runtimeInstanceId !== s.active.runtimeInstanceId) {
+        return s;
+      }
+      if (event.sessionId && event.sessionId !== s.active.sessionId) {
         return s;
       }
       const reduced = reducePiEvent(
         {
           runtimeInstanceId: s.active.runtimeInstanceId,
+          sessionId: s.active.sessionId,
           messages: s.messages,
           streamingText: s.streamingText,
         },
         event,
       );
       const nextActive = { ...s.active };
+      const raw = event.raw;
+      if (typeof raw.isCompacting === "boolean") {
+        nextActive.isCompacting = raw.isCompacting;
+      }
       if (event.eventType === "agent_start") {
-        nextActive.isStreaming = true;
+        nextActive.isStreaming = !nextActive.isCompacting;
       }
       if (event.eventType === "agent_end" || event.eventType === "agent_settled") {
         nextActive.isStreaming = false;
-        nextActive.isCompacting = false;
-      }
-      if (event.eventType === "agent_start" && event.summary.includes("compact")) {
-        nextActive.isCompacting = true;
+        if (typeof raw.isCompacting !== "boolean") {
+          nextActive.isCompacting = false;
+        }
+        shouldResync = true;
       }
       return {
         ...s,
@@ -246,6 +295,9 @@ function createStore() {
         sessionStatus: statusFromActive(nextActive),
       };
     });
+    if (shouldResync) {
+      void resyncFromNative();
+    }
   }
 
   function dismissBusy(): void {
@@ -272,6 +324,8 @@ function createStore() {
     dismissBusy,
     loadModels,
     snapshot,
+    removeIndexedSession,
+    reportError,
   };
 }
 

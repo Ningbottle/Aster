@@ -147,7 +147,7 @@ fn dummy_runtime() -> PiRuntime {
 }
 
 fn sink() -> aster_lib::pi_runtime::PiEventSink {
-    Arc::new(|_, _| {})
+    Arc::new(|_, _, _| {})
 }
 
 fn write_session_file(dir: &Path, name: &str) -> PathBuf {
@@ -265,4 +265,44 @@ fn binding_failed_cross_project_start_leaves_no_false_binding() {
         .unwrap_err();
     assert!(matches!(err, PiOpenError::StartFailed(_)));
     assert!(mgr.active_binding().is_none());
+}
+
+#[test]
+fn binding_rpc_does_not_hold_runtime_lock() {
+    let tmp = tempfile::tempdir().unwrap();
+    let project = tmp.path().join("proj-a");
+    fs::create_dir_all(&project).unwrap();
+    let a1 = write_session_file(&project, "a1.jsonl");
+    let ctrl = FakePiController::new();
+    let mgr = Arc::new(PiRuntimeManager::with_fake(Arc::clone(&ctrl)));
+    mgr.open_session(&dummy_runtime(), &project, &a1, sink())
+        .unwrap();
+
+    ctrl.block_next_get_state();
+    let mgr_rpc = Arc::clone(&mgr);
+    let handle = std::thread::spawn(move || mgr_rpc.get_state());
+    ctrl.wait_until_get_state_entered();
+    assert!(
+        mgr.active_binding().is_some(),
+        "event/command readers must not wait on the RPC mutex"
+    );
+    ctrl.release_get_state();
+    handle.join().unwrap().unwrap();
+}
+
+#[test]
+fn binding_new_session_clears_previous_file_identity() {
+    let tmp = tempfile::tempdir().unwrap();
+    let project = tmp.path().join("proj-a");
+    fs::create_dir_all(&project).unwrap();
+    let a1 = write_session_file(&project, "a1.jsonl");
+    let ctrl = FakePiController::new();
+    let mgr = PiRuntimeManager::with_fake(Arc::clone(&ctrl));
+    mgr.open_session(&dummy_runtime(), &project, &a1, sink())
+        .unwrap();
+    mgr.create_session(&dummy_runtime(), &project, sink())
+        .unwrap();
+    mgr.open_session(&dummy_runtime(), &project, &a1, sink())
+        .unwrap();
+    assert_eq!(ctrl.switches.lock().unwrap().as_slice(), &[a1]);
 }

@@ -316,8 +316,6 @@ pub struct PiLaunchOptions {
     pub session_path: Option<PathBuf>,
 }
 
-/// Launch args after `node <cli.js>`. `--session` selects a native file;
-/// it is not a second integration route.
 pub fn pi_launch_args(options: &PiLaunchOptions) -> Vec<String> {
     let mut args = vec!["--mode".into(), "rpc".into()];
     if let Some(path) = &options.session_path {

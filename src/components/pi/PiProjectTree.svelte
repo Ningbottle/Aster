@@ -7,6 +7,15 @@
   export let openProjectPicker: () => Promise<void>;
   export let createSession: (projectPath: string) => Promise<void>;
   export let openSession: (projectPath: string, sessionId: string) => Promise<void>;
+  export let removeFromIndex: (sessionId: string) => Promise<void>;
+
+  async function run(action: () => Promise<void>) {
+    try {
+      await action();
+    } catch {
+      // visible error lives on the store / tree error slot
+    }
+  }
 
   let expanded = new Set<string>();
 
@@ -47,7 +56,7 @@
 </script>
 
 <nav class="pi-project-tree" aria-label="Pi 项目与会话">
-  <button type="button" class="open-project" on:click={() => openProjectPicker()}>
+  <button type="button" class="open-project" on:click={() => run(openProjectPicker)}>
     打开项目
   </button>
 
@@ -79,7 +88,7 @@
           type="button"
           class="new-session"
           aria-label={`在 ${project.displayName} 中新建会话`}
-          on:click={() => createSession(project.path)}
+          on:click={() => run(() => createSession(project.path))}
         >+</button>
       </div>
 
@@ -92,7 +101,7 @@
                 class="session-btn"
                 class:active={session.isActive}
                 disabled={session.availability !== "available"}
-                on:click={() => openSession(project.path, session.sessionId)}
+                on:click={() => run(() => openSession(project.path, session.sessionId))}
               >
                 <span class="session-name">
                   {session.name || formatUnnamedSession(session.modifiedAt)}
@@ -102,6 +111,15 @@
                 {/if}
                 <time datetime={session.modifiedAt}>{formatRelativeTime(session.modifiedAt)}</time>
               </button>
+              {#if session.availability === "missing" || session.availability === "project_missing"}
+                <button
+                  type="button"
+                  class="forget"
+                  on:click={() => run(() => removeFromIndex(session.sessionId))}
+                >
+                  从索引移除
+                </button>
+              {/if}
             </li>
           {/each}
           {#if project.sessions.length === 0}
@@ -231,5 +249,13 @@
   .avail {
     font-size: 11px;
     color: var(--faint);
+  }
+  .forget {
+    font-size: 11px;
+    color: var(--muted);
+    padding: 2px 8px;
+  }
+  .forget:hover {
+    color: var(--fg);
   }
 </style>

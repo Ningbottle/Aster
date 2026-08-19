@@ -106,10 +106,7 @@ pub(crate) fn locked_runtime() -> Result<PiRuntime, String> {
 }
 
 pub(crate) fn pi_event_sink(app: tauri::AppHandle) -> PiEventSink {
-    Arc::new(move |instance_id, event: SessionEvent| {
-        let session_id = app
-            .try_state::<PiRuntimeManager>()
-            .and_then(|mgr| mgr.session_id_if_instance(instance_id));
+    Arc::new(move |instance_id, session_id, event: SessionEvent| {
         let _ = app.emit(
             "pi-event",
             PiEventEnvelope {
@@ -901,6 +898,7 @@ pub fn run() {
             pi_commands::pi_session_prompt,
             pi_commands::pi_session_abort,
             pi_commands::pi_session_stop,
+            pi_commands::pi_session_index_remove,
             dsh_discover,
             dsh_install_managed,
             dsh_start,

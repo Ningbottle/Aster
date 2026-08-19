@@ -481,7 +481,6 @@ pub fn get_pi_session(
     }
 }
 
-/// Mark index rows whose `session_id` was not observed in the latest scan.
 pub fn mark_pi_sessions_unseen(
     conn: &Connection,
     seen_session_ids: &[String],

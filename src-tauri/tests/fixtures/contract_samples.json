@@ -221,5 +221,8 @@
         "delta": "hello"
       }
     }
+  },
+  "PiSessionIndexRemoveArgs": {
+    "sessionId": "session-1"
   }
 }

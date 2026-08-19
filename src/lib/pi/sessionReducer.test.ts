@@ -3,7 +3,7 @@ import { messagesFromNative, reducePiEvent } from "./sessionReducer";
 
 describe("reducePiEvent", () => {
   it("ignores an event from a previous runtime instance", () => {
-    const state = { runtimeInstanceId: 9, messages: [], streamingText: "" };
+    const state = { runtimeInstanceId: 9, sessionId: "active", messages: [], streamingText: "" };
     const next = reducePiEvent(state, {
       runtimeInstanceId: 8,
       sessionId: "old",
@@ -14,9 +14,22 @@ describe("reducePiEvent", () => {
     expect(next).toBe(state);
   });
 
+  it("ignores an event from a previous native session on the same instance", () => {
+    const state = { runtimeInstanceId: 9, sessionId: "s-2", messages: [], streamingText: "" };
+    const next = reducePiEvent(state, {
+      runtimeInstanceId: 9,
+      sessionId: "s-1",
+      eventType: "message_update",
+      summary: "",
+      raw: { assistantMessageEvent: { type: "text_delta", delta: "stale" } },
+    });
+    expect(next).toBe(state);
+  });
+
   it("preserves restored messages while appending the active stream", () => {
     const state = {
       runtimeInstanceId: 9,
+      sessionId: "active",
       messages: [{ role: "user" as const, content: "restored" }],
       streamingText: "",
     };
@@ -29,6 +42,25 @@ describe("reducePiEvent", () => {
     });
     expect(next.messages).toHaveLength(1);
     expect(next.streamingText).toBe("hello");
+  });
+
+  it("does not invent an assistant row on settle", () => {
+    const state = {
+      runtimeInstanceId: 9,
+      sessionId: "active",
+      messages: [{ role: "user" as const, content: "restored" }],
+      streamingText: "partial",
+    };
+    const next = reducePiEvent(state, {
+      runtimeInstanceId: 9,
+      sessionId: "active",
+      eventType: "agent_settled",
+      summary: "agent settled",
+      raw: {},
+    });
+    expect(next.messages).toHaveLength(1);
+    expect(next.messages[0]?.role).toBe("user");
+    expect(next.streamingText).toBe("");
   });
 });
 

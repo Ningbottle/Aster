@@ -5,11 +5,11 @@ use crate::pi_sessions::project_paths_equal;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 
-pub type PiEventSink = Arc<dyn Fn(u64, SessionEvent) + Send + Sync>;
+pub type PiEventSink = Arc<dyn Fn(u64, Option<String>, SessionEvent) + Send + Sync>;
 
 #[derive(Debug, Clone)]
 pub struct PiActiveBinding {
@@ -64,7 +64,7 @@ pub struct PiEventEnvelope {
     pub raw: Value,
 }
 
-trait PiProcess: Send {
+trait PiProcess: Send + Sync {
     fn get_state(&self) -> Result<Value, String>;
     fn get_messages(&self) -> Result<Vec<Value>, String>;
     fn get_session_stats(&self) -> Result<Value, String>;
@@ -77,76 +77,94 @@ trait PiProcess: Send {
     fn prompt(&self, message: &str) -> Result<(), String>;
     fn abort(&self) -> Result<(), String>;
     fn wait_settled(&self, timeout: Duration) -> bool;
-    fn stop(&mut self) -> std::io::Result<()>;
+    fn stop(&self) -> std::io::Result<()>;
     fn is_closed(&self) -> bool;
 }
 
-impl PiProcess for PiSession {
+struct LockedPiSession {
+    inner: Mutex<PiSession>,
+}
+
+impl PiProcess for LockedPiSession {
     fn get_state(&self) -> Result<Value, String> {
-        PiSession::get_state(self)
+        lock_session(&self.inner)?.get_state()
     }
     fn get_messages(&self) -> Result<Vec<Value>, String> {
-        PiSession::get_messages(self)
+        lock_session(&self.inner)?.get_messages()
     }
     fn get_session_stats(&self) -> Result<Value, String> {
-        PiSession::get_session_stats(self)
+        lock_session(&self.inner)?.get_session_stats()
     }
     fn switch_session(&self, session_path: &Path) -> Result<bool, String> {
-        PiSession::switch_session(self, session_path)
+        lock_session(&self.inner)?.switch_session(session_path)
     }
     fn new_session(&self) -> Result<(), String> {
-        PiSession::new_session(self)
+        lock_session(&self.inner)?.new_session()
     }
     fn set_model(&self, provider: &str, model_id: &str) -> Result<Value, String> {
-        PiSession::set_model(self, provider, model_id)
+        lock_session(&self.inner)?.set_model(provider, model_id)
     }
     fn set_thinking_level(&self, level: &str) -> Result<(), String> {
-        PiSession::set_thinking_level(self, level)
+        lock_session(&self.inner)?.set_thinking_level(level)
     }
     fn set_session_name(&self, name: &str) -> Result<(), String> {
-        PiSession::set_session_name(self, name)
+        lock_session(&self.inner)?.set_session_name(name)
     }
     fn get_available_models(&self) -> Result<Vec<Value>, String> {
-        PiSession::get_available_models(self)
+        lock_session(&self.inner)?.get_available_models()
     }
     fn prompt(&self, message: &str) -> Result<(), String> {
-        PiSession::prompt(self, message)
+        lock_session(&self.inner)?.prompt(message)
     }
     fn abort(&self) -> Result<(), String> {
-        PiSession::abort(self)
+        lock_session(&self.inner)?.abort()
     }
     fn wait_settled(&self, timeout: Duration) -> bool {
-        PiSession::wait_settled(self, timeout)
+        let watcher = match self.inner.lock() {
+            Ok(session) => session.watcher(),
+            Err(_) => return false,
+        };
+        watcher.wait_settled(timeout)
     }
-    fn stop(&mut self) -> std::io::Result<()> {
-        PiSession::stop(self)
+    fn stop(&self) -> std::io::Result<()> {
+        self.inner
+            .lock()
+            .map_err(|_| std::io::Error::new(std::io::ErrorKind::Other, "session lock poisoned"))?
+            .stop()
     }
     fn is_closed(&self) -> bool {
-        PiSession::is_closed(self)
+        self.inner.lock().map(|s| s.is_closed()).unwrap_or(true)
     }
+}
+
+fn lock_session(inner: &Mutex<PiSession>) -> Result<std::sync::MutexGuard<'_, PiSession>, String> {
+    inner
+        .lock()
+        .map_err(|e| format!("session lock failed: {e}"))
 }
 
 struct StartSpec {
     cli_js: PathBuf,
     cwd: PathBuf,
     options: PiLaunchOptions,
-    instance_id: u64,
-    on_event: PiEventSink,
+    on_event: Arc<dyn Fn(SessionEvent) + Send + Sync>,
 }
 
-type ProcessStarter = Arc<dyn Fn(StartSpec) -> Result<Box<dyn PiProcess>, String> + Send + Sync>;
+type ProcessStarter = Arc<dyn Fn(StartSpec) -> Result<Arc<dyn PiProcess>, String> + Send + Sync>;
 
 struct ActivePiRuntime {
     instance_id: u64,
     project_path: PathBuf,
     session_id: String,
     session_path: Option<PathBuf>,
-    session: Box<dyn PiProcess>,
+    session: Arc<dyn PiProcess>,
+    published_session_id: Arc<Mutex<String>>,
 }
 
 pub struct PiRuntimeManager {
     next_instance_id: AtomicU64,
     active: Mutex<Option<ActivePiRuntime>>,
+    start_gate: Mutex<()>,
     starter: ProcessStarter,
 }
 
@@ -165,6 +183,7 @@ impl PiRuntimeManager {
         Self {
             next_instance_id: AtomicU64::new(1),
             active: Mutex::new(None),
+            start_gate: Mutex::new(()),
             starter,
         }
     }
@@ -178,22 +197,16 @@ impl PiRuntimeManager {
         Some(binding_of(active))
     }
 
-    pub fn session_id_if_instance(&self, instance_id: u64) -> Option<String> {
-        let guard = self.active.lock().ok()?;
-        let active = guard.as_ref()?;
-        if active.instance_id == instance_id {
-            Some(active.session_id.clone())
-        } else {
-            None
-        }
-    }
-
     pub fn create_session(
         &self,
         runtime: &PiRuntime,
         project_path: &Path,
         on_event: PiEventSink,
     ) -> Result<PiActiveSnapshot, PiOpenError> {
+        let _gate = self
+            .start_gate
+            .lock()
+            .map_err(|e| PiOpenError::RpcFailed(format!("start lock failed: {e}")))?;
         if !project_path.is_dir() {
             return Err(PiOpenError::ProjectMissing);
         }
@@ -210,6 +223,10 @@ impl PiRuntimeManager {
         session_path: &Path,
         on_event: PiEventSink,
     ) -> Result<PiActiveSnapshot, PiOpenError> {
+        let _gate = self
+            .start_gate
+            .lock()
+            .map_err(|e| PiOpenError::RpcFailed(format!("start lock failed: {e}")))?;
         if !project_path.is_dir() {
             return Err(PiOpenError::ProjectMissing);
         }
@@ -235,15 +252,13 @@ impl PiRuntimeManager {
     }
 
     pub fn prompt(&self, message: &str) -> Result<(), String> {
-        self.with_live(|session, _| session.prompt(message))
+        self.live_session()?.prompt(message)
     }
 
     pub fn abort(&self) -> Result<PiActiveSnapshot, String> {
-        self.with_live(|session, _| {
-            session.abort()?;
-            let _ = session.wait_settled(Duration::from_secs(30));
-            Ok(())
-        })?;
+        let session = self.live_session()?;
+        session.abort()?;
+        let _ = session.wait_settled(Duration::from_secs(30));
         self.snapshot()
     }
 
@@ -252,33 +267,35 @@ impl PiRuntimeManager {
             .active
             .lock()
             .map_err(|e| format!("runtime lock failed: {e}"))?;
-        if let Some(mut active) = guard.take() {
-            let _ = active.session.stop();
+        if let Some(old) = guard.take() {
+            let _ = old.session.stop();
         }
         Ok(())
     }
 
     pub fn set_model(&self, provider: &str, model_id: &str) -> Result<PiActiveSnapshot, String> {
-        self.with_live(|session, _| session.set_model(provider, model_id).map(|_| ()))?;
+        self.live_session()?
+            .set_model(provider, model_id)
+            .map(|_| ())?;
         self.snapshot()
     }
 
     pub fn set_thinking_level(&self, level: &str) -> Result<PiActiveSnapshot, String> {
-        self.with_live(|session, _| session.set_thinking_level(level))?;
+        self.live_session()?.set_thinking_level(level)?;
         self.snapshot()
     }
 
     pub fn set_session_name(&self, name: &str) -> Result<PiActiveSnapshot, String> {
-        self.with_live(|session, _| session.set_session_name(name))?;
+        self.live_session()?.set_session_name(name)?;
         self.snapshot()
     }
 
     pub fn get_available_models(&self) -> Result<Vec<Value>, String> {
-        self.with_live(|session, _| session.get_available_models())
+        self.live_session()?.get_available_models()
     }
 
     pub fn get_state(&self) -> Result<Value, String> {
-        self.with_live(|session, _| session.get_state())
+        self.live_session()?.get_state()
     }
 
     pub fn observation_json(&self) -> Result<Value, String> {
@@ -293,10 +310,7 @@ impl PiRuntimeManager {
         }
     }
 
-    fn with_live<T>(
-        &self,
-        f: impl FnOnce(&dyn PiProcess, &ActivePiRuntime) -> Result<T, String>,
-    ) -> Result<T, String> {
+    fn live_session(&self) -> Result<Arc<dyn PiProcess>, String> {
         let guard = self
             .active
             .lock()
@@ -305,27 +319,27 @@ impl PiRuntimeManager {
         if active.session.is_closed() {
             return Err("no active Pi session".into());
         }
-        f(active.session.as_ref(), active)
+        Ok(Arc::clone(&active.session))
     }
 
     fn same_project_idle(&self, project_path: &Path) -> Result<bool, PiOpenError> {
-        let mut guard = self
-            .active
-            .lock()
-            .map_err(|e| PiOpenError::RpcFailed(format!("runtime lock failed: {e}")))?;
-        let Some(active) = guard.as_mut() else {
-            return Ok(false);
+        let session = {
+            let mut guard = self
+                .active
+                .lock()
+                .map_err(|e| PiOpenError::RpcFailed(format!("runtime lock failed: {e}")))?;
+            let Some(active) = guard.as_mut() else {
+                return Ok(false);
+            };
+            if active.session.is_closed() {
+                *guard = None;
+                return Ok(false);
+            }
+            let same = project_paths_equal(&active.project_path, project_path);
+            (Arc::clone(&active.session), same)
         };
-        if active.session.is_closed() {
-            *guard = None;
-            return Ok(false);
-        }
-        if !project_paths_equal(&active.project_path, project_path) {
-            self.ensure_not_busy(active.session.as_ref())?;
-            return Ok(false);
-        }
-        self.ensure_not_busy(active.session.as_ref())?;
-        Ok(true)
+        self.ensure_not_busy(session.0.as_ref())?;
+        Ok(session.1)
     }
 
     fn is_already_open(
@@ -361,39 +375,43 @@ impl PiRuntimeManager {
     }
 
     fn new_session_on_active(&self) -> Result<PiActiveSnapshot, PiOpenError> {
-        let mut guard = self
-            .active
-            .lock()
-            .map_err(|e| PiOpenError::RpcFailed(format!("runtime lock failed: {e}")))?;
-        let active = guard
-            .as_mut()
-            .ok_or(PiOpenError::RpcFailed("no active Pi session".into()))?;
-        self.ensure_not_busy(active.session.as_ref())?;
-        active
-            .session
-            .new_session()
-            .map_err(PiOpenError::RpcFailed)?;
-        refresh_active(active)
+        let session = self.live_session().map_err(PiOpenError::RpcFailed)?;
+        self.ensure_not_busy(session.as_ref())?;
+        session.new_session().map_err(PiOpenError::RpcFailed)?;
+        {
+            let mut guard = self
+                .active
+                .lock()
+                .map_err(|e| PiOpenError::RpcFailed(format!("runtime lock failed: {e}")))?;
+            if let Some(active) = guard.as_mut() {
+                active.session_path = None;
+                if let Ok(mut published) = active.published_session_id.lock() {
+                    published.clear();
+                }
+            }
+        }
+        self.snapshot_active()
     }
 
     fn switch_on_active(&self, session_path: &Path) -> Result<PiActiveSnapshot, PiOpenError> {
-        let mut guard = self
-            .active
-            .lock()
-            .map_err(|e| PiOpenError::RpcFailed(format!("runtime lock failed: {e}")))?;
-        let active = guard
-            .as_mut()
-            .ok_or(PiOpenError::RpcFailed("no active Pi session".into()))?;
-        self.ensure_not_busy(active.session.as_ref())?;
-        let cancelled = active
-            .session
+        let session = self.live_session().map_err(PiOpenError::RpcFailed)?;
+        self.ensure_not_busy(session.as_ref())?;
+        let cancelled = session
             .switch_session(session_path)
             .map_err(PiOpenError::RpcFailed)?;
         if cancelled {
             return Err(PiOpenError::Cancelled);
         }
-        active.session_path = Some(session_path.to_path_buf());
-        refresh_active(active)
+        {
+            let mut guard = self
+                .active
+                .lock()
+                .map_err(|e| PiOpenError::RpcFailed(format!("runtime lock failed: {e}")))?;
+            if let Some(active) = guard.as_mut() {
+                active.session_path = Some(session_path.to_path_buf());
+            }
+        }
+        self.snapshot_active()
     }
 
     fn restart(
@@ -404,48 +422,63 @@ impl PiRuntimeManager {
         on_event: PiEventSink,
     ) -> Result<PiActiveSnapshot, PiOpenError> {
         {
+            let session = {
+                let guard = self
+                    .active
+                    .lock()
+                    .map_err(|e| PiOpenError::RpcFailed(format!("runtime lock failed: {e}")))?;
+                guard.as_ref().and_then(|active| {
+                    if active.session.is_closed() {
+                        None
+                    } else {
+                        Some(Arc::clone(&active.session))
+                    }
+                })
+            };
+            if let Some(session) = session {
+                self.ensure_not_busy(session.as_ref())?;
+            }
             let mut guard = self
                 .active
                 .lock()
                 .map_err(|e| PiOpenError::RpcFailed(format!("runtime lock failed: {e}")))?;
-            if let Some(active) = guard.as_ref() {
-                if !active.session.is_closed() {
-                    self.ensure_not_busy(active.session.as_ref())?;
-                }
-            }
-            if let Some(mut old) = guard.take() {
+            if let Some(old) = guard.take() {
                 let _ = old.session.stop();
             }
         }
 
         let instance_id = self.next_instance_id.fetch_add(1, Ordering::SeqCst);
+        let published_session_id = Arc::new(Mutex::new(String::new()));
+        let stamped = wrap_event_sink(instance_id, Arc::clone(&published_session_id), on_event);
         let spec = StartSpec {
             cli_js: PathBuf::from(&runtime.cli_js),
             cwd: project_path.to_path_buf(),
             options: PiLaunchOptions {
                 session_path: session_path.clone(),
             },
-            instance_id,
-            on_event,
+            on_event: stamped,
         };
         let session = match (self.starter)(spec) {
             Ok(s) => s,
             Err(e) => return Err(PiOpenError::StartFailed(e)),
         };
-        let mut active = ActivePiRuntime {
-            instance_id,
-            project_path: project_path.to_path_buf(),
-            session_id: String::new(),
-            session_path,
-            session,
-        };
-        let snap = match refresh_active(&mut active) {
+        let fetched = match fetch_snapshot(session.as_ref()) {
             Ok(s) => s,
             Err(e) => {
-                let _ = active.session.stop();
+                let _ = session.stop();
                 return Err(e);
             }
         };
+        let active = ActivePiRuntime {
+            instance_id,
+            project_path: project_path.to_path_buf(),
+            session_id: fetched.session_id.clone(),
+            session_path: fetched.session_path.clone().or(session_path),
+            session,
+            published_session_id,
+        };
+        publish_session_id(&active.published_session_id, &active.session_id);
+        let snap = snapshot_from(&active, fetched);
         match self.active.lock() {
             Ok(mut guard) => {
                 *guard = Some(active);
@@ -459,6 +492,21 @@ impl PiRuntimeManager {
     }
 
     fn snapshot_active(&self) -> Result<PiActiveSnapshot, PiOpenError> {
+        let (instance_id, session) = {
+            let mut guard = self
+                .active
+                .lock()
+                .map_err(|e| PiOpenError::RpcFailed(format!("runtime lock failed: {e}")))?;
+            let active = guard
+                .as_mut()
+                .ok_or(PiOpenError::RpcFailed("no active Pi session".into()))?;
+            if active.session.is_closed() {
+                *guard = None;
+                return Err(PiOpenError::RpcFailed("no active Pi session".into()));
+            }
+            (active.instance_id, Arc::clone(&active.session))
+        };
+        let fetched = fetch_snapshot(session.as_ref())?;
         let mut guard = self
             .active
             .lock()
@@ -466,11 +514,34 @@ impl PiRuntimeManager {
         let active = guard
             .as_mut()
             .ok_or(PiOpenError::RpcFailed("no active Pi session".into()))?;
-        if active.session.is_closed() {
-            *guard = None;
+        if active.instance_id != instance_id {
             return Err(PiOpenError::RpcFailed("no active Pi session".into()));
         }
-        refresh_active(active)
+        apply_fetched(active, &fetched);
+        Ok(snapshot_from(active, fetched))
+    }
+}
+
+fn wrap_event_sink(
+    instance_id: u64,
+    published: Arc<Mutex<String>>,
+    user: PiEventSink,
+) -> Arc<dyn Fn(SessionEvent) + Send + Sync> {
+    Arc::new(move |event| {
+        let session_id = published.lock().ok().and_then(|id| {
+            if id.is_empty() {
+                None
+            } else {
+                Some(id.clone())
+            }
+        });
+        user(instance_id, session_id, event);
+    })
+}
+
+fn publish_session_id(published: &Mutex<String>, session_id: &str) {
+    if let Ok(mut slot) = published.lock() {
+        *slot = session_id.to_string();
     }
 }
 
@@ -493,53 +564,79 @@ fn state_busy(state: &Value) -> bool {
             .unwrap_or(false)
 }
 
-fn refresh_active(active: &mut ActivePiRuntime) -> Result<PiActiveSnapshot, PiOpenError> {
-    let state = active.session.get_state().map_err(PiOpenError::RpcFailed)?;
-    let messages = active
-        .session
-        .get_messages()
-        .map_err(PiOpenError::RpcFailed)?;
-    let stats = active.session.get_session_stats().unwrap_or(Value::Null);
-    if let Some(id) = state.get("sessionId").and_then(Value::as_str) {
-        if !id.is_empty() {
-            active.session_id = id.to_string();
-        }
-    }
-    if let Some(file) = state.get("sessionFile").and_then(Value::as_str) {
-        if !file.is_empty() {
-            active.session_path = Some(PathBuf::from(file));
-        }
-    }
-    Ok(PiActiveSnapshot {
-        binding: binding_of(active),
+struct FetchedSnapshot {
+    state: Value,
+    messages: Vec<Value>,
+    stats: Value,
+    session_id: String,
+    session_path: Option<PathBuf>,
+}
+
+fn fetch_snapshot(session: &dyn PiProcess) -> Result<FetchedSnapshot, PiOpenError> {
+    let state = session.get_state().map_err(PiOpenError::RpcFailed)?;
+    let messages = session.get_messages().map_err(PiOpenError::RpcFailed)?;
+    let stats = session.get_session_stats().unwrap_or(Value::Null);
+    let session_id = state
+        .get("sessionId")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    let session_path = state
+        .get("sessionFile")
+        .and_then(Value::as_str)
+        .filter(|s| !s.is_empty())
+        .map(PathBuf::from);
+    Ok(FetchedSnapshot {
         state,
         messages,
         stats,
+        session_id,
+        session_path,
     })
 }
 
-fn start_real_process(spec: StartSpec) -> Result<Box<dyn PiProcess>, String> {
-    let sink = spec.on_event;
-    let instance_id = spec.instance_id;
+fn apply_fetched(active: &mut ActivePiRuntime, fetched: &FetchedSnapshot) {
+    if !fetched.session_id.is_empty() {
+        active.session_id = fetched.session_id.clone();
+        publish_session_id(&active.published_session_id, &active.session_id);
+    }
+    active.session_path = fetched.session_path.clone();
+}
+
+fn snapshot_from(active: &ActivePiRuntime, fetched: FetchedSnapshot) -> PiActiveSnapshot {
+    PiActiveSnapshot {
+        binding: binding_of(active),
+        state: fetched.state,
+        messages: fetched.messages,
+        stats: fetched.stats,
+    }
+}
+
+fn start_real_process(spec: StartSpec) -> Result<Arc<dyn PiProcess>, String> {
+    let on_event = spec.on_event;
     let session = PiSession::start(&spec.cli_js, &spec.cwd, None, &spec.options, move |event| {
-        sink(instance_id, event)
+        on_event(event);
     })
     .map_err(|e| e.to_string())?;
-    Ok(Box::new(session))
+    Ok(Arc::new(LockedPiSession {
+        inner: Mutex::new(session),
+    }))
 }
 
-/// Scriptable backend used by binding tests. Not a second Pi integration route.
 pub struct FakePiController {
     pub starts: Mutex<Vec<(PathBuf, Option<PathBuf>)>>,
     pub switches: Mutex<Vec<PathBuf>>,
     pub stops: AtomicU64,
     pub aborts: AtomicU64,
     pub new_sessions: AtomicU64,
-    pub streaming: std::sync::atomic::AtomicBool,
-    pub compacting: std::sync::atomic::AtomicBool,
-    pub fail_next_start: std::sync::atomic::AtomicBool,
+    pub streaming: AtomicBool,
+    pub compacting: AtomicBool,
+    pub fail_next_start: AtomicBool,
     pub session_id: Mutex<String>,
     pub messages: Mutex<Vec<Value>>,
+    block_get_state: AtomicBool,
+    entered_get_state: Mutex<bool>,
+    get_state_cv: Condvar,
 }
 
 impl FakePiController {
@@ -550,19 +647,41 @@ impl FakePiController {
             stops: AtomicU64::new(0),
             aborts: AtomicU64::new(0),
             new_sessions: AtomicU64::new(0),
-            streaming: std::sync::atomic::AtomicBool::new(false),
-            compacting: std::sync::atomic::AtomicBool::new(false),
-            fail_next_start: std::sync::atomic::AtomicBool::new(false),
+            streaming: AtomicBool::new(false),
+            compacting: AtomicBool::new(false),
+            fail_next_start: AtomicBool::new(false),
             session_id: Mutex::new(String::new()),
             messages: Mutex::new(Vec::new()),
+            block_get_state: AtomicBool::new(false),
+            entered_get_state: Mutex::new(false),
+            get_state_cv: Condvar::new(),
         })
+    }
+
+    pub fn block_next_get_state(&self) {
+        if let Ok(mut entered) = self.entered_get_state.lock() {
+            *entered = false;
+        }
+        self.block_get_state.store(true, Ordering::SeqCst);
+    }
+
+    pub fn wait_until_get_state_entered(&self) {
+        let mut entered = self.entered_get_state.lock().unwrap();
+        while !*entered {
+            entered = self.get_state_cv.wait(entered).unwrap();
+        }
+    }
+
+    pub fn release_get_state(&self) {
+        self.block_get_state.store(false, Ordering::SeqCst);
+        self.get_state_cv.notify_all();
     }
 }
 
 struct FakePiProcess {
     ctrl: Arc<FakePiController>,
     session_path: Mutex<Option<PathBuf>>,
-    closed: std::sync::atomic::AtomicBool,
+    closed: AtomicBool,
 }
 
 impl PiRuntimeManager {
@@ -584,17 +703,27 @@ impl PiRuntimeManager {
             } else if script.session_id.lock().unwrap().is_empty() {
                 *script.session_id.lock().unwrap() = "created-1".into();
             }
-            Ok(Box::new(FakePiProcess {
+            Ok(Arc::new(FakePiProcess {
                 ctrl: Arc::clone(&script),
                 session_path: Mutex::new(spec.options.session_path),
-                closed: std::sync::atomic::AtomicBool::new(false),
-            }))
+                closed: AtomicBool::new(false),
+            }) as Arc<dyn PiProcess>)
         }))
     }
 }
 
 impl PiProcess for FakePiProcess {
     fn get_state(&self) -> Result<Value, String> {
+        if self.ctrl.block_get_state.load(Ordering::SeqCst) {
+            {
+                let mut entered = self.ctrl.entered_get_state.lock().unwrap();
+                *entered = true;
+                self.ctrl.get_state_cv.notify_all();
+                while self.ctrl.block_get_state.load(Ordering::SeqCst) {
+                    entered = self.ctrl.get_state_cv.wait(entered).unwrap();
+                }
+            }
+        }
         let id = self.ctrl.session_id.lock().unwrap().clone();
         let file = self
             .session_path
@@ -662,7 +791,7 @@ impl PiProcess for FakePiProcess {
     fn wait_settled(&self, _timeout: Duration) -> bool {
         true
     }
-    fn stop(&mut self) -> std::io::Result<()> {
+    fn stop(&self) -> std::io::Result<()> {
         self.closed.store(true, Ordering::SeqCst);
         self.ctrl.stops.fetch_add(1, Ordering::SeqCst);
         Ok(())

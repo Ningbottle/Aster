@@ -121,11 +121,15 @@
   }
 
   async function openProjectPicker() {
-    const picked = await invoke<string | null>("project_pick_directory");
-    if (picked && picked.trim()) {
-      await invoke("project_choose", { path: picked.trim() });
-      await piConsoleStore.refreshTree();
-      await onProjectChange?.();
+    try {
+      const picked = await invoke<string | null>("project_pick_directory");
+      if (picked && picked.trim()) {
+        await invoke("project_choose", { path: picked.trim() });
+        await piConsoleStore.refreshTree();
+        await onProjectChange?.();
+      }
+    } catch (err) {
+      piConsoleStore.reportError(err);
     }
   }
 </script>
@@ -148,6 +152,7 @@
           openProjectPicker={openProjectPicker}
           createSession={(path) => piConsoleStore.createSession(path)}
           openSession={(path, id) => piConsoleStore.openSession(path, id)}
+          removeFromIndex={(id) => piConsoleStore.removeIndexedSession(id)}
         />
       {:else if !isSkills}
         <div class="nav-group" id="side-nav">

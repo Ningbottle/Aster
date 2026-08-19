@@ -7,8 +7,8 @@
 
 use aster_lib::pi_commands::{
     PiActiveSessionDto, PiEventEnvelopeDto, PiProjectNodeDto, PiSessionCreateArgs,
-    PiSessionOpenArgs, PiSessionPromptArgs, PiSessionSetModelArgs, PiSessionSetNameArgs,
-    PiSessionSetThinkingArgs, PiSessionSummaryDto, PERMISSION_SUMMARY,
+    PiSessionIndexRemoveArgs, PiSessionOpenArgs, PiSessionPromptArgs, PiSessionSetModelArgs,
+    PiSessionSetNameArgs, PiSessionSetThinkingArgs, PiSessionSummaryDto, PERMISSION_SUMMARY,
 };
 use aster_lib::skill_flow::{
     self, BatchDeployResult, DeploymentPlanItem,
@@ -263,6 +263,10 @@ fn contract_pi_session_command_payloads_are_camel_case() {
     let prompt: PiSessionPromptArgs =
         serde_json::from_value(fixtures["PiSessionPromptArgs"].clone()).unwrap();
     assert_eq!(prompt.message, "fixture prompt");
+
+    let forget: PiSessionIndexRemoveArgs =
+        serde_json::from_value(fixtures["PiSessionIndexRemoveArgs"].clone()).unwrap();
+    assert_eq!(forget.session_id, "session-1");
 
     let active: PiActiveSessionDto =
         serde_json::from_value(fixtures["PiActiveSessionDto_sample"].clone()).unwrap();

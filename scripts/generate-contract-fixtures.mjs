@@ -118,6 +118,9 @@ const contractSamples = {
   PiSessionPromptArgs: {
     message: "fixture prompt",
   },
+  PiSessionIndexRemoveArgs: {
+    sessionId: "session-1",
+  },
   PiActiveSessionDto_sample: {
     runtimeInstanceId: 1,
     projectPath: "C:\\Workspace\\project-a",

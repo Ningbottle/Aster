@@ -39,16 +39,32 @@
       .join("\n\n");
   }
 
+  function toolsFromMessage(msg: PiMessage): { name: string; args: string; isError?: boolean }[] {
+    if (msg.role === "toolResult" && msg.content && typeof msg.content === "object" && !Array.isArray(msg.content)) {
+      const rec = msg.content as Record<string, unknown>;
+      return [{
+        name: String(rec.name ?? rec.toolName ?? "tool"),
+        args: JSON.stringify(rec, null, 2),
+        isError: rec.isError === true,
+      }];
+    }
+    return toolsFromContent(msg.content);
+  }
+
   function toolsFromContent(content: unknown): { name: string; args: string; isError?: boolean }[] {
     if (!Array.isArray(content)) return [];
     const out: { name: string; args: string; isError?: boolean }[] = [];
     for (const block of content) {
       if (!block || typeof block !== "object") continue;
       const rec = block as Record<string, unknown>;
-      if (rec.type === "toolCall") {
+      if (rec.type === "toolCall" || rec.type === "toolResult") {
+        const result = rec.result && typeof rec.result === "object"
+          ? (rec.result as Record<string, unknown>)
+          : null;
         out.push({
-          name: String(rec.name ?? "tool"),
-          args: JSON.stringify(rec.arguments ?? rec.args ?? {}, null, 2),
+          name: String(rec.name ?? rec.toolName ?? "tool"),
+          args: JSON.stringify(rec.arguments ?? rec.args ?? rec.content ?? rec.result ?? {}, null, 2),
+          isError: rec.isError === true || result?.isError === true,
         });
       }
     }
@@ -85,7 +101,7 @@
         {:else}
           <div class="md-body">{@html renderMarkdown(textFromContent(msg.content))}</div>
         {/if}
-        {#each toolsFromContent(msg.content) as tool, ti (`${i}-${ti}`)}
+        {#each toolsFromMessage(msg) as tool, ti (`${i}-${ti}`)}
           <details class="tool" class:err={tool.isError}>
             <summary>{tool.name}{tool.isError ? " · 失败" : ""}</summary>
             <pre><code>{tool.args}</code></pre>

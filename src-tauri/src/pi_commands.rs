@@ -91,6 +91,12 @@ pub struct PiSessionPromptArgs {
     pub message: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PiSessionIndexRemoveArgs {
+    pub session_id: String,
+}
+
 pub type PiEventEnvelopeDto = PiEventEnvelope;
 
 #[tauri::command]
@@ -170,8 +176,13 @@ pub fn pi_session_open(
         return Err(format!("session is {}", rec.availability));
     }
     let root = default_session_root().map_err(|e| e.to_string())?;
-    let session_file =
-        resolve_session_path(&root, &rec.session_rel_path).map_err(|e| e.to_string())?;
+    let session_file = match resolve_session_path(&root, &rec.session_rel_path) {
+        Ok(path) => path,
+        Err(_) => {
+            db::mark_pi_session_missing(&conn, &session_id).map_err(|e| e.to_string())?;
+            return Err("session file is missing".into());
+        }
+    };
     let runtime = locked_runtime()?;
     let snap = state
         .open_session(
@@ -180,7 +191,12 @@ pub fn pi_session_open(
             &session_file,
             pi_event_sink(app),
         )
-        .map_err(open_err)?;
+        .map_err(|err| {
+            if matches!(err, PiOpenError::SessionMissing) {
+                let _ = db::mark_pi_session_missing(&conn, &session_id);
+            }
+            open_err(err)
+        })?;
     persist_snapshot(&snap)?;
     dto_from_snapshot(&snap)
 }
@@ -230,6 +246,16 @@ pub fn pi_session_abort(state: State<PiRuntimeManager>) -> Result<PiActiveSessio
 #[tauri::command]
 pub fn pi_session_stop(state: State<PiRuntimeManager>) -> Result<(), String> {
     state.stop()
+}
+
+#[tauri::command]
+pub fn pi_session_index_remove(
+    state: State<PiRuntimeManager>,
+    session_id: String,
+) -> Result<Vec<PiProjectNodeDto>, String> {
+    let (_layout, conn) = open_layout_and_db()?;
+    db::remove_pi_session_index(&conn, session_id.trim()).map_err(|e| e.to_string())?;
+    build_tree(&conn, state.active_binding())
 }
 
 fn open_err(err: PiOpenError) -> String {
@@ -317,12 +343,14 @@ fn persist_snapshot(snap: &PiActiveSnapshot) -> Result<(), String> {
             .map_err(|e| e.to_string())?;
     }
     let root = default_session_root().map_err(|e| e.to_string())?;
-    let rel = snap
+    let Some(rel) = snap
         .state
         .get("sessionFile")
         .and_then(Value::as_str)
         .and_then(|file| relative_locator(&root, Path::new(file)).ok())
-        .unwrap_or_else(|| format!("{}.jsonl", snap.binding.session_id));
+    else {
+        return Ok(());
+    };
     let now = chrono::Utc::now().to_rfc3339();
     let rec = PiSessionIndexRecord {
         session_id: snap.binding.session_id.clone(),
