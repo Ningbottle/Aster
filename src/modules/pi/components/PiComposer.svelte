@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { invoke } from "@tauri-apps/api/core";
+  import { piApi } from "../api";
   import { piConsoleStore } from "../store";
 
   export let hasPi = false;
@@ -38,7 +38,7 @@
     installing = true;
     installMsg = "正在安装 Pi 0.84.2 到 Aster 管理目录...";
     try {
-      await invoke("pi_install_managed", { version: "0.84.2" });
+      await piApi.installManaged("0.84.2");
       installMsg = "成功安装 Managed Pi 0.84.2";
       await onRefresh();
     } catch (e) {

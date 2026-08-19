@@ -11,4 +11,4 @@ export type ServiceTab = {
   icon: string;
 };
 
-export type ViewId = "home" | "pi" | "dsh" | "skills" | "agents" | "infra";
+export type ViewId = "pi" | "dsh" | "skills";

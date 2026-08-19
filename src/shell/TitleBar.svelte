@@ -2,7 +2,7 @@
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import type { ServiceTab, ViewId } from "../types";
 
-  export let activeView: ViewId = "home";
+  export let activeView: ViewId = "pi";
   export let openTabs: ("pi" | "dsh" | "skills")[] = ["pi", "dsh", "skills"];
   export let onSelectView: (id: ViewId) => void;
   export let onCloseTab: (id: "pi" | "dsh" | "skills") => void;
@@ -69,16 +69,10 @@
 <svelte:window on:click={handleWindowClick} on:keydown={(e) => e.key === "Escape" && (showMenu = false)} />
 
 <header class="titlebar" data-tauri-drag-region>
-  <button type="button" class="app-mark" title="回到首页" aria-label="回到首页" on:click={() => onSelectView("home")}>
+  <button type="button" class="app-mark" title="Aster 工作台" aria-label="Aster 工作台" on:click={() => onSelectView("pi")}>
     <span class="dot-logo">A</span>
     <span>Aster 工作台</span>
   </button>
-
-  <nav class="menus">
-    <button type="button" on:click={() => onSelectView("home")}>文件</button>
-    <button type="button" on:click={() => onSelectView("agents")}>视图</button>
-    <button type="button" on:click={() => onSelectView("infra")}>帮助</button>
-  </nav>
 
   <div class="drag" data-tauri-drag-region>
     <div class="tb-tabs" role="tablist" aria-label="工作区">
@@ -169,6 +163,7 @@
     display: flex;
     align-items: center;
     gap: 8px;
+    margin-right: 12px;
     font-family: var(--font-display);
     font-weight: 600;
     font-size: 12.5px;
@@ -189,24 +184,6 @@
     color: var(--surface);
     font-size: 10px;
     font-weight: 700;
-  }
-  .menus {
-    display: flex;
-    gap: 2px;
-    margin-left: 20px;
-  }
-  .menus button {
-    font-size: 12px;
-    color: var(--muted);
-    padding: 4px 10px;
-    border-radius: var(--r-sm);
-    background: none;
-    border: none;
-    cursor: pointer;
-  }
-  .menus button:hover {
-    background: var(--border);
-    color: var(--fg);
   }
   .drag {
     flex: 1;
@@ -370,10 +347,5 @@
   .caption-btns svg {
     width: 10px;
     height: 10px;
-  }
-  @media (max-width: 880px) {
-    .menus {
-      display: none;
-    }
   }
 </style>

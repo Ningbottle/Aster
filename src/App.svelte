@@ -1,6 +1,5 @@
 <script lang="ts">
   import { onMount, onDestroy } from "svelte";
-  import { invoke } from "@tauri-apps/api/core";
   import { listen } from "@tauri-apps/api/event";
 
   import type {
@@ -13,16 +12,15 @@
     SkillItem,
     ViewId,
   } from "./types";
+  import { formatInvokeError, invoke, isTauriRuntime } from "./platform/ipc";
+  import { emptyHostRuntimeFacts } from "./platform/runtimeStatus";
   import { piConsoleStore } from "./modules/pi/store";
 
   import TitleBar from "./shell/TitleBar.svelte";
-  import Sidebar from "./shell/ModuleBar.svelte";
-  import HomeView from "./views/HomeView.svelte";
-  import PiView from "./modules/pi/PiModule.svelte";
-  import DshView from "./modules/dsh/DshModule.svelte";
-  import SkillsView from "./modules/skills/SkillsModule.svelte";
-  import AgentsView from "./views/AgentsView.svelte";
-  import InfraView from "./views/InfraView.svelte";
+  import ModuleBar from "./shell/ModuleBar.svelte";
+  import PiModule from "./modules/pi/PiModule.svelte";
+  import DshModule from "./modules/dsh/DshModule.svelte";
+  import SkillsModule from "./modules/skills/SkillsModule.svelte";
 
   const ALL_TOOLS = [
     "Pi",
@@ -38,11 +36,10 @@
     "ZCode",
   ];
 
-  let activeView: ViewId = "home";
-  let openTabs: ("pi" | "dsh" | "skills")[] = ["pi", "dsh", "skills"];
+  let activeView: ViewId = "pi";
+  let openTabs: ViewId[] = ["pi", "dsh", "skills"];
   let activeTool = "all";
 
-  // Backend state
   let status: AppStatus | null = null;
   let piRuntimes: PiRuntime[] = [];
   let dshRuntimes: DshRuntime[] = [];
@@ -51,9 +48,9 @@
   let skillStatus: Record<string, unknown> | null = null;
   let skills: SkillItem[] = [];
   let lastBackendError: string | null = null;
+  let runtimeFacts = emptyHostRuntimeFacts();
 
-  let dshViewRef: DshView;
-  let skillsViewRef: SkillsView;
+  let dshViewRef: DshModule;
   let unlisten: (() => void) | null = null;
 
   $: skillCountsByTool = ALL_TOOLS.reduce<Record<string, number>>((acc, tool) => {
@@ -72,29 +69,28 @@
       dshStatus = await invoke<DshStatus | null>("dsh_status");
       discoveredHosts = await invoke<DiscoveredHost[]>("host_profiles_list", {});
       skills = await invoke<SkillItem[]>("skills_list");
+      runtimeFacts = { pi: runtimeFacts.pi, dsh: dshStatus };
       lastBackendError = null;
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error("refreshData invoke error:", err);
-      const isWebOnly = typeof window !== "undefined" && !(window as any).__TAURI_INTERNALS__;
-      if (!isWebOnly) {
-        lastBackendError = typeof err === "string" ? err : (err?.message || JSON.stringify(err));
+      if (isTauriRuntime()) {
+        lastBackendError = formatInvokeError(err);
       }
     }
   }
 
   onMount(async () => {
-    // 读取持久化标签与视图
     try {
       const storedTabs = localStorage.getItem("aster.openTabs");
       if (storedTabs) {
         const parsed = JSON.parse(storedTabs);
         if (Array.isArray(parsed) && parsed.length) {
-          openTabs = parsed.filter((id) => ["pi", "dsh", "skills"].includes(id));
+          openTabs = parsed.filter((id: string): id is ViewId => ["pi", "dsh", "skills"].includes(id));
         }
       }
-      const storedView = localStorage.getItem("aster.activeView") as ViewId;
-      if (storedView && ["home", "pi", "dsh", "skills", "agents", "infra"].includes(storedView)) {
-        activeView = storedView;
+      const storedView = localStorage.getItem("aster.activeView");
+      if (storedView && ["pi", "dsh", "skills"].includes(storedView)) {
+        activeView = storedView as ViewId;
       }
     } catch (e) {
       console.debug("Failed to restore stored view/tabs:", e);
@@ -116,8 +112,8 @@
   });
 
   function handleSelectView(id: ViewId) {
-    if (["pi", "dsh", "skills"].includes(id) && !openTabs.includes(id as "pi" | "dsh" | "skills")) {
-      openTabs = [...openTabs, id as "pi" | "dsh" | "skills"];
+    if (!openTabs.includes(id)) {
+      openTabs = [...openTabs, id];
       try {
         localStorage.setItem("aster.openTabs", JSON.stringify(openTabs));
       } catch (e) {
@@ -141,7 +137,7 @@
     }
   }
 
-  function handleCloseTab(id: "pi" | "dsh" | "skills") {
+  function handleCloseTab(id: ViewId) {
     openTabs = openTabs.filter((x) => x !== id);
     if (id === "dsh") {
       dshViewRef?.stopDshServer();
@@ -152,16 +148,12 @@
       console.debug("Failed to store openTabs:", e);
     }
     if (activeView === id) {
-      handleSelectView(openTabs.length ? (openTabs[openTabs.length - 1] as ViewId) : "home");
+      handleSelectView(openTabs.length ? openTabs[openTabs.length - 1] : "pi");
     }
   }
 
   function handleSelectTool(tool: string) {
     activeTool = tool;
-  }
-
-  function handleOpenPiChat() {
-    handleSelectView("pi");
   }
 </script>
 
@@ -174,13 +166,12 @@
   />
 
   <div class="shell">
-    <Sidebar
+    <ModuleBar
       {activeView}
       {activeTool}
       tools={ALL_TOOLS}
       {skillCountsByTool}
       {totalSkillsCount}
-      onSelectView={handleSelectView}
       onSelectTool={handleSelectTool}
       onProjectChange={refreshData}
     />
@@ -194,29 +185,15 @@
         </div>
       {/if}
 
-      <!-- 视图 1：Aster 首页 -->
-      <section class="view" class:active={activeView === "home"}>
-        <HomeView
-          {piRuntimes}
-          {dshStatus}
-          {totalSkillsCount}
-          onSelectView={handleSelectView}
-          onOpenPiChat={handleOpenPiChat}
-          onProjectChange={refreshData}
-        />
-      </section>
-
-      <!-- 视图 2：Pi 工作台 -->
       <section class="view" class:active={activeView === "pi"}>
-        <PiView
+        <PiModule
           {piRuntimes}
           onRefresh={refreshData}
         />
       </section>
 
-      <!-- 视图 3：DeepSeek Harness -->
       <section class="view" class:active={activeView === "dsh"}>
-        <DshView
+        <DshModule
           bind:this={dshViewRef}
           {dshRuntimes}
           {dshStatus}
@@ -224,32 +201,12 @@
         />
       </section>
 
-      <!-- 视图 4：Skills-Hub -->
       <section class="view" class:active={activeView === "skills"}>
-        <SkillsView
-          bind:this={skillsViewRef}
+        <SkillsModule
           {activeTool}
           {discoveredHosts}
           {skills}
           onRefresh={refreshData}
-        />
-      </section>
-
-      <!-- 视图 5：智能体与宿主 -->
-      <section class="view" class:active={activeView === "agents"}>
-        <AgentsView
-          {piRuntimes}
-          {dshStatus}
-          {discoveredHosts}
-          onSelectView={handleSelectView}
-        />
-      </section>
-
-      <!-- 视图 6：基础设施与证据 -->
-      <section class="view" class:active={activeView === "infra"}>
-        <InfraView
-          {status}
-          {skillStatus}
         />
       </section>
     </main>

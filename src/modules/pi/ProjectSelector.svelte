@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { invoke } from "@tauri-apps/api/core";
+  import { invoke } from "../../platform/ipc";
   import { onMount, createEventDispatcher } from "svelte";
   import type { RecentProject } from "../../types";
 

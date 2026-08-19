@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "../../platform/ipc";
 import type { PiActiveSession, PiProjectNode } from "../../types";
 
 export const piApi = {
@@ -21,4 +21,5 @@ export const piApi = {
   availableModels: () => invoke<import("../../types").PiModel[]>("pi_get_available_models"),
   runtimeSnapshot: () =>
     invoke<import("../../types").PiRuntimeSnapshot>("pi_runtime_snapshot"),
+  installManaged: (version: string) => invoke<void>("pi_install_managed", { version }),
 };
