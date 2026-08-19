@@ -2,10 +2,10 @@
 //! 「静态检查 -> 快照创建 -> 测试作用域部署 -> 证据链记录 -> 部署查询 -> 补偿回滚」全链路，
 //! 不依赖外部网络。
 
-use aster_lib::app_data::AppDataLayout;
-use aster_lib::db;
-use aster_lib::evidence::{Stage, Status};
-use aster_lib::skill_flow::{self, DeploymentTarget, SkillSource};
+use aster_lib::platform::app_data::AppDataLayout;
+use aster_lib::platform::db;
+use aster_lib::platform::evidence::{Stage, Status};
+use aster_lib::skills::{self as skill_flow, DeploymentTarget, SkillSource};
 use std::collections::BTreeMap;
 use std::fs;
 

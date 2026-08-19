@@ -5,15 +5,15 @@
 //! - 验证字段命名别名（如 host vs host_id, scope vs scope_kind）、默认值缺省处理、
 //!   枚举 snake_case 命名以及路径安全解析。
 
-use aster_lib::pi_commands::{
+use aster_lib::ipc::pi::{
     PiActiveSessionDto, PiEventEnvelopeDto, PiProjectNodeDto, PiSessionCreateArgs,
     PiSessionIndexRemoveArgs, PiSessionOpenArgs, PiSessionPromptArgs, PiSessionSetModelArgs,
     PiSessionSetNameArgs, PiSessionSetThinkingArgs, PiSessionSummaryDto, PERMISSION_SUMMARY,
 };
-use aster_lib::pi_runtime::PiRuntimeSnapshotDto;
-use aster_lib::skill_flow::{
-    self, BatchDeployResult, DeploymentPlanItem, DeploymentTarget, PlanItemStatus, SnapshotDiff,
-    TranslationDoc,
+use aster_lib::pi::runtime::PiRuntimeSnapshotDto;
+use aster_lib::skills::{
+    self as skill_flow, BatchDeployResult, DeploymentPlanItem, DeploymentTarget, PlanItemStatus,
+    SnapshotDiff, TranslationDoc,
 };
 use aster_lib::SkillItemDto;
 use serde::Deserialize;
@@ -382,7 +382,7 @@ fn contract_r3_github_and_quarantine_fixtures() {
             .expect("GithubAuthStatus 应当反序列化成功");
     assert_eq!(auth_status.has_token, true);
 
-    let q_item: aster_lib::skill_flow::QuarantineItemDto =
+    let q_item: aster_lib::skills::QuarantineItemDto =
         serde_json::from_value(fixtures["QuarantineItem_sample"].clone())
             .expect("QuarantineItemDto 应当反序列化成功");
     assert_eq!(q_item.quarantine_id, "quarantine-test");

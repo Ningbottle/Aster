@@ -1,11 +1,11 @@
 //! Catalog and runtime binding tests for native Pi sessions.
 
-use aster_lib::pi_connector::PiRuntime;
-use aster_lib::pi_runtime::{
+use aster_lib::pi::connector::PiRuntime;
+use aster_lib::pi::runtime::{
     decide_activate_project, decide_remove_project, ActivateProjectDecision, FakePiController,
     PiOpenError, PiRuntimeManager,
 };
-use aster_lib::pi_sessions::{
+use aster_lib::pi::sessions::{
     project_paths_equal, resolve_session_path, scan_session_root, scan_session_root_with_limits,
     PiCatalogError, MAX_SESSION_FILES, MAX_SESSION_FILE_BYTES,
 };
@@ -149,7 +149,7 @@ fn dummy_runtime() -> PiRuntime {
     }
 }
 
-fn sink() -> aster_lib::pi_runtime::PiEventSink {
+fn sink() -> aster_lib::pi::runtime::PiEventSink {
     Arc::new(|_, _, _| {})
 }
 

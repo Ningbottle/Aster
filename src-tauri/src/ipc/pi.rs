@@ -2,18 +2,23 @@
 
 use crate::db::{self, PiSessionIndexRecord};
 use crate::pi_runtime::{
-    PiActiveSnapshot, PiEventEnvelope, PiOpenError, PiRuntimeManager, PiRuntimeSnapshotDto,
+    PiActiveSnapshot, PiEventEnvelope, PiEventSink, PiOpenError, PiRuntimeManager,
+    PiRuntimeSnapshotDto,
 };
 use crate::pi_sessions::{
     default_session_root, normalize_project_path, project_paths_equal, relative_locator,
     resolve_session_path, scan_session_root, PiSessionCatalogEntry,
 };
-use crate::{locked_runtime, open_layout_and_db, pi_event_sink};
+use crate::ipc::diag;
+use crate::pi::connector::{self as pi_connector, PiRuntime, SessionEvent};
+use crate::pi::locked_runtime;
+use crate::platform::{app_data, open_layout_and_db};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use tauri::State;
+use std::sync::Arc;
+use tauri::{Emitter, State};
 
 pub const PERMISSION_SUMMARY: &str = "windows_user";
 
@@ -252,7 +257,7 @@ pub fn pi_session_stop(state: State<PiRuntimeManager>) -> Result<(), String> {
 
 #[tauri::command]
 pub fn pi_runtime_snapshot(state: State<PiRuntimeManager>) -> Result<PiRuntimeSnapshotDto, String> {
-    let has_locked_install = crate::locked_runtime().is_ok();
+    let has_locked_install = locked_runtime().is_ok();
     Ok(state.runtime_snapshot(has_locked_install))
 }
 
@@ -429,4 +434,83 @@ fn display_name_for(path: &str) -> String {
         .map(|s| s.to_string_lossy().into_owned())
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| path.to_string())
+}
+
+#[tauri::command]
+pub fn pi_discover() -> Result<Vec<PiRuntime>, String> {
+    let root = app_data::AppDataLayout::default_root().map_err(|e| e.to_string())?;
+    let runtimes = pi_connector::discover(&root);
+    if let Ok((_layout, conn)) = crate::platform::open_layout_and_db() {
+        for r in &runtimes {
+            let kind = if r.managed {
+                "managed"
+            } else {
+                "recognized_external"
+            };
+            let _ = db::record_host_install(&conn, "pi", kind, &r.version, &r.cli_js);
+        }
+    }
+    Ok(runtimes)
+}
+
+#[tauri::command]
+pub fn pi_install_managed(version: Option<String>) -> Result<PiRuntime, String> {
+    let ver = version
+        .as_deref()
+        .unwrap_or(pi_connector::LOCKED_PI_VERSION);
+    let root = app_data::AppDataLayout::default_root().map_err(|e| e.to_string())?;
+    let runtime = pi_connector::install_managed(&root, ver)?;
+    if let Ok((_layout, conn)) = crate::platform::open_layout_and_db() {
+        let _ = db::record_host_install(&conn, "pi", "managed", &runtime.version, &runtime.cli_js);
+    }
+    Ok(runtime)
+}
+pub(crate) fn pi_event_sink(app: tauri::AppHandle) -> PiEventSink {
+    Arc::new(move |instance_id, session_id, event: SessionEvent| {
+        diag::emit_tick();
+        let _ = app.emit(
+            "pi-event",
+            PiEventEnvelope {
+                runtime_instance_id: instance_id,
+                session_id,
+                event_type: event.event_type,
+                summary: event.summary,
+                raw: event.raw,
+            },
+        );
+    })
+}
+
+#[tauri::command]
+pub fn pi_session_status(state: tauri::State<PiRuntimeManager>) -> Result<bool, String> {
+    Ok(state.active_binding().is_some())
+}
+
+#[tauri::command]
+pub fn pi_get_available_models(
+    state: tauri::State<PiRuntimeManager>,
+) -> Result<Vec<serde_json::Value>, String> {
+    state.get_available_models()
+}
+
+#[tauri::command]
+pub fn pi_set_model(
+    state: tauri::State<PiRuntimeManager>,
+    provider: String,
+    model_id: String,
+) -> Result<serde_json::Value, String> {
+    let snap = state.set_model(&provider, &model_id)?;
+    Ok(snap.state)
+}
+
+#[tauri::command]
+pub fn pi_get_state(state: tauri::State<PiRuntimeManager>) -> Result<serde_json::Value, String> {
+    state.get_state()
+}
+
+#[tauri::command]
+pub fn pi_session_observation(
+    state: tauri::State<PiRuntimeManager>,
+) -> Result<serde_json::Value, String> {
+    state.observation_json()
 }

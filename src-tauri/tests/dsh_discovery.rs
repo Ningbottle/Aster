@@ -2,8 +2,8 @@
 //! 「DSH 运行时探测 -> 端口分配 -> 冲突避让 -> 服务器生命周期与停止」流程，
 //! 不依赖外部网络。
 
-use aster_lib::app_data::AppDataLayout;
-use aster_lib::dsh_connector::{self, DshServer};
+use aster_lib::platform::app_data::AppDataLayout;
+use aster_lib::dsh::connector::{self as dsh_connector, DshServer};
 use std::fs;
 use std::process::{Command, Stdio};
 

@@ -9,11 +9,11 @@
 //! 7. 外部未托管冲突拦截与执行失败补偿回滚（Compensating Rollback）
 //! 8. 分级 Evidence 记录验证
 
-use aster_lib::app_data::AppDataLayout;
-use aster_lib::db;
-use aster_lib::evidence::{self, EvidenceKey, Stage, Status};
-use aster_lib::host_profile;
-use aster_lib::skill_flow::{self, DeploymentTarget, SkillSource, TranslationDoc};
+use aster_lib::platform::app_data::AppDataLayout;
+use aster_lib::platform::db;
+use aster_lib::platform::evidence::{self, EvidenceKey, Stage, Status};
+use aster_lib::hosts::profile as host_profile;
+use aster_lib::skills::{self as skill_flow, DeploymentTarget, SkillSource, TranslationDoc};
 use chrono::Utc;
 use std::fs;
 use std::path::Path;
