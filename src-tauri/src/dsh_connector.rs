@@ -55,7 +55,7 @@ pub struct DshRuntime {
 /// 发现 DSH 安装：Aster-managed（runtimes/dsh/<v>/...）与外部 npm 全局安装。
 /// 识别依据是官方 CLI 包 `@deepseek-ai/dsh` 的入口 `lib/bin.js`——仅含
 /// dsh-web-app 的旧布局（自行拼装 runner 时代）没有 boot 注入链路，不得
-/// 识别为完整宿主（由 m2_flow 的失败测试锁定）。只读操作，不向任何目录写入。
+/// 识别为完整宿主（由 dsh_discovery 的失败测试锁定）。只读操作，不向任何目录写入。
 pub fn discover(app_data_root: &Path) -> Vec<DshRuntime> {
     let mut found = Vec::new();
     let runtimes = app_data_root.join("runtimes").join("dsh");

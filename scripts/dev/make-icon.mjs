@@ -1,5 +1,5 @@
 // 生成一张 1024x1024 纯色带简单图形的 PNG 作为应用图标源。
-// 仅用 Node 内置模块，无外部依赖。输出 scripts/icon-source.png。
+// 仅用 Node 内置模块，无外部依赖。输出 scripts/dev/icon-source.png。
 import { deflateSync } from "node:zlib";
 import { writeFileSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";

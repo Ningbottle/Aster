@@ -3,7 +3,7 @@ import path from "path";
 import { fileURLToPath } from "url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const fixturesDir = path.resolve(__dirname, "../src-tauri/tests/fixtures");
+const fixturesDir = path.resolve(__dirname, "../../src-tauri/tests/fixtures");
 
 if (!fs.existsSync(fixturesDir)) {
   fs.mkdirSync(fixturesDir, { recursive: true });

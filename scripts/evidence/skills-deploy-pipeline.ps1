@@ -2,7 +2,7 @@
 # 真实 Tauri UI 验收必须单独执行并记录，不能由本脚本推断。
 
 $ErrorActionPreference = "Stop"
-$generator = Join-Path $PSScriptRoot "run-e2e-pipeline-evidence.mjs"
+$generator = Join-Path $PSScriptRoot "skills-deploy-pipeline.mjs"
 
 node $generator
 if ($LASTEXITCODE -ne 0) {

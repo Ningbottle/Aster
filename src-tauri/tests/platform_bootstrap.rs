@@ -1,4 +1,4 @@
-//! M0 集成测试：在真实临时目录上走一遍「布局创建 -> 文件数据库迁移 ->
+//! 平台启动集成测试：在真实临时目录上走一遍「布局创建 -> 文件数据库迁移 ->
 //! 证据追加/查询/失效 -> 脱敏日志落盘」流程，不使用内存数据库。
 
 use aster_lib::app_data::AppDataLayout;
@@ -7,7 +7,7 @@ use aster_lib::evidence::{self, EvidenceKey, EvidenceRecord, Stage, Status};
 use aster_lib::logging::JsonlLogger;
 
 #[test]
-fn full_m0_flow_on_real_files() {
+fn platform_bootstrap_on_real_files() {
     let tmp = tempfile::tempdir().unwrap();
     let layout = AppDataLayout::open(tmp.path()).unwrap();
 

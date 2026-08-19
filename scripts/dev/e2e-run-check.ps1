@@ -1,7 +1,7 @@
 ﻿# 开发冒烟检查：用隔离数据目录隐藏启动 release 版 Aster，确认指定进程存活、
 # 数据库被创建，然后只终止本脚本启动的进程树。它不验证真实 UI 或业务链路。
 param(
-    [string]$AsterExe = "$PSScriptRoot\..\src-tauri\target\release\aster.exe",
+    [string]$AsterExe = "$PSScriptRoot\..\..\src-tauri\target\release\aster.exe",
     [string]$DataDir = (Join-Path $env:TEMP ("aster-e2e-check-{0}-{1}" -f $PID, [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()))
 )
 

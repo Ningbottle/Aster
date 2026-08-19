@@ -125,12 +125,11 @@ M0 只矫正安全与事实错误，不做视觉重构：
 
 ## 完成与验证规则
 
-- 单元测试、selftest、fixture 或后端命令成功不等于用户功能完成。
+- 单元测试、fixture 或后端命令成功不等于用户功能完成。
 - 用户可见功能必须有真实 UI → invoke → Rust 链路操作证据。
 - 前端不硬编码 Skills、Evidence、会话、计数或状态标签；后端错误必须在 UI 可见。
 - 前端 invoke 参数与 Rust serde DTO 必须有契约测试。
 - 没有实际运行验证，不声称“通过”“兼容”“可回滚”或“完成”。
-- 旧的 --selftest-m1/m2/m3 只是遗留诊断入口，不代表当前 M1/M2/M3。
 
 ## 开发环境
 
@@ -151,7 +150,7 @@ M0 只矫正安全与事实错误，不做视觉重构：
 | 前端生产构建 | npm run build |
 | Rust 测试 | cargo test --manifest-path src-tauri/Cargo.toml |
 | 完整发布构建 | npm run tauri build |
-| 发布版冒烟检查 | powershell -NoProfile -ExecutionPolicy Bypass -File scripts/e2e-run-check.ps1 |
+| 发布版冒烟检查 | powershell -NoProfile -ExecutionPolicy Bypass -File scripts/dev/e2e-run-check.ps1 |
 
 CI 在 Windows 上依次运行 Rust 测试、前端单测、类型检查、假数据门禁和 Tauri 发布构建。
 
@@ -166,7 +165,7 @@ GitHub 只维护两份 Markdown：README.md 是公开产品基线与状态摘要
     src/                 Svelte 5 + TypeScript 前端
     src-tauri/src/       Rust Core、Tauri commands、SQLite 与宿主连接器
     src-tauri/tests/     Rust 契约与集成测试
-    scripts/             CI、证据执行和发布辅助脚本
+    scripts/             CI 门禁、验收证据和开发辅助脚本
     .github/workflows/   Windows CI
 
 当前工作区还包含整改 R1–R3 的未提交实现以及新加入的源文件。整理文档不等于这些实现已经验收，也不要用 reset/checkout 丢弃它们。

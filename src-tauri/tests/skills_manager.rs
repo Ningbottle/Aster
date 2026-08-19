@@ -1,5 +1,5 @@
-//! M3 集成测试：
-//! 在真实临时文件系统和 SQLite 数据库中完整演练 Milestone M3 全套广度能力：
+//! Skills 管理广度集成测试：
+//! 在真实临时文件系统和 SQLite 数据库中演练扫描、隔离、快照、翻译、部署与证据：
 //! 1. 11 个宿主工具 Profiles 静态事实与本地扫描
 //! 2. 多 Skill 仓库结构化解析与分组
 //! 3. 恶意脚本/二进制安全拦截与 Quarantine 分区隔离
@@ -26,7 +26,7 @@ fn write_file(path: &Path, content: &str) {
 }
 
 #[test]
-fn test_m3_skills_manager_breadth_flow() {
+fn skills_manager_breadth_flow() {
     let tmp = tempfile::tempdir().unwrap();
     let layout = AppDataLayout::open(tmp.path()).unwrap();
 

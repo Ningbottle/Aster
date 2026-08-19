@@ -3,9 +3,9 @@
 // 前置：启动应用前设置环境变量
 //   WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9222
 // 用法：
-//   node scripts/cdp-ui.mjs list                          列出所有可调试目标（窗口/iframe）
-//   node scripts/cdp-ui.mjs eval --target <子串> --expr <JS>   在匹配目标中执行表达式（awaitPromise）
-//   node scripts/cdp-ui.mjs shot --target <子串> --out <png>   对匹配目标截屏
+//   node scripts/dev/cdp-ui.mjs list                          列出所有可调试目标（窗口/iframe）
+//   node scripts/dev/cdp-ui.mjs eval --target <子串> --expr <JS>   在匹配目标中执行表达式（awaitPromise）
+//   node scripts/dev/cdp-ui.mjs shot --target <子串> --out <png>   对匹配目标截屏
 // --target 按 url 再 title 包含匹配；省略时取第一个 page 目标。
 // 退出码：0 成功；2 找不到目标；3 CDP 调用失败。
 

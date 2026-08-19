@@ -1,4 +1,4 @@
-//! M1 集成测试：在真实临时目录中验证
+//! Skills 部署集成测试：在真实临时目录中验证
 //! 「静态检查 -> 快照创建 -> 测试作用域部署 -> 证据链记录 -> 部署查询 -> 补偿回滚」全链路，
 //! 不依赖外部网络。
 
@@ -10,7 +10,7 @@ use std::collections::BTreeMap;
 use std::fs;
 
 #[test]
-fn test_m1_skill_deployment_evidence_and_rollback_flow() {
+fn skill_deployment_evidence_and_rollback_flow() {
     let tmp = tempfile::tempdir().unwrap();
     let layout = AppDataLayout::open(tmp.path()).unwrap();
 

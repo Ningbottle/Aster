@@ -21,14 +21,6 @@ use std::fs;
 use std::io::{self, Read};
 use std::path::{Component, Path, PathBuf};
 
-/// M1 纵切锁定的真实 GitHub Skill 来源（anthropics/skills，纯 Markdown）。
-pub static M1_SKILL_SOURCE: std::sync::LazyLock<SkillSource> =
-    std::sync::LazyLock::new(|| SkillSource {
-        repo: "anthropics/skills".into(),
-        commit_sha: "00756142ab04c82a447693cf373c4e0c554d1005".into(),
-        skill_path: "skills/doc-coauthoring".into(),
-    });
-
 /// 静态检查允许的文件扩展名（小写，不含点）。
 const ALLOWED_EXTENSIONS: &[&str] = &[
     "md", "txt", "json", "yaml", "yml", "png", "jpg", "jpeg", "gif", "svg",

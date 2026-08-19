@@ -4,7 +4,7 @@ import { execSync } from "child_process";
 import { fileURLToPath } from "url";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
-const rootDir = path.resolve(scriptDir, "..");
+const rootDir = path.resolve(scriptDir, "../..");
 const evidenceDir = path.resolve(rootDir, ".tmp/evidence");
 fs.mkdirSync(evidenceDir, { recursive: true });
 
@@ -15,13 +15,13 @@ function run(title, command) {
 }
 
 const results = [
-  run("CI no-fake-data gate", "node scripts/ci-no-fake-data.mjs"),
+  run("CI no-fake-data gate", "node scripts/ci/no-fake-data.mjs"),
   run("Svelte/TypeScript check", "npm run check"),
   run("Frontend production build", "npm run build"),
   run("Rust unit, contract and flow tests", "cargo test --manifest-path src-tauri/Cargo.toml"),
   run(
     "Release process/AppData smoke check",
-    "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/e2e-run-check.ps1",
+    "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/dev/e2e-run-check.ps1",
   ),
 ];
 

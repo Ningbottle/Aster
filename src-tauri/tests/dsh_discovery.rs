@@ -1,4 +1,4 @@
-//! M2 集成测试：在真实临时目录中验证
+//! DSH 发现集成测试：在真实临时目录中验证
 //! 「DSH 运行时探测 -> 端口分配 -> 冲突避让 -> 服务器生命周期与停止」流程，
 //! 不依赖外部网络。
 
@@ -8,7 +8,7 @@ use std::fs;
 use std::process::{Command, Stdio};
 
 #[test]
-fn test_m2_dsh_connector_discovery_and_port_handling() {
+fn dsh_connector_discovery_and_port_handling() {
     let tmp = tempfile::tempdir().unwrap();
     let layout = AppDataLayout::open(tmp.path()).unwrap();
 

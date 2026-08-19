@@ -7,8 +7,8 @@
 # 审计结束后与 diag.rs 一并删除，不要在其上扩展成常驻监控。
 #
 # 用法：
-#   powershell -NoProfile -ExecutionPolicy Bypass -File scripts/capture-runtime-state.ps1
-#   powershell -NoProfile -ExecutionPolicy Bypass -File scripts/capture-runtime-state.ps1 -Label "场景3-streaming中关闭"
+#   powershell -NoProfile -ExecutionPolicy Bypass -File scripts/dev/capture-runtime-state.ps1
+#   powershell -NoProfile -ExecutionPolicy Bypass -File scripts/dev/capture-runtime-state.ps1 -Label "场景3-streaming中关闭"
 #
 # 只读：不结束任何进程，不写入仓库以外目录（除报告文件）。
 
