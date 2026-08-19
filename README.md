@@ -4,7 +4,7 @@ Aster 是面向熟悉 AI 工具的开发者与高级用户的 Windows 本地优�
 
 更新日期：2026-08-19
 
-当前结论：**项目处于新版 M0「安全阻断」阶段，M0 尚未完成。** M0.1 活动 Pi Session 下的 Project 保护已有真实 invoke 验收。M0.2 Skills 错误入口已从普通 UI 移除，GitHub 弹窗三种关闭已观察到。M0.3 Runtime 事实源尚未在 App/Home 收口。Pi 控制台 V0–V5 主项此前已观察。不能把 M0 或 M2/M3 标为阶段完成。
+当前结论：**项目处于新版 M0「安全阻断」阶段，M0 尚未完成。** M0.1 活动 Pi Session 下的 Project 保护已有真实 invoke 验收。M0.2 Skills 错误入口已从普通 UI 和 command API 移除，GitHub 弹窗三种关闭已再次观察到。M0.3/M0.4 Runtime 事实源已有 `platform/runtimeStatus.ts` 落点，App 尚未把各宿主状态收口为唯一订阅源。Pi 控制台 V0–V5 主项此前已观察。不能把 M0 或 M2/M3 标为阶段完成。
 
 AI / Coding Agent 的唯一开发规约见 [`AGENTS.md`](AGENTS.md)。README 保存公开产品基线和状态摘要；本机可在被 Git 忽略的 `docs/` 中维护详细状态、计划和证据。二者冲突时必须依据代码与验证结果纠正，不能让旧文档覆盖当前结论。
 
@@ -15,7 +15,7 @@ AI / Coding Agent 的唯一开发规约见 [`AGENTS.md`](AGENTS.md)。README 保
 | 时期 | 发生了什么 | 现在如何看待 |
 |---|---|---|
 | 初始 M0–M3 | 建立 Svelte/Tauri/Rust/SQLite、Pi RPC、DSH、Skills 等基础；提交 4265376 曾写成 “M0–M3 complete” | 后续审计证明 selftest 和后端测试不能代表真实 UI 可用，该完成结论已失效 |
-| 整改 R1–R3 | R1 修复假数据和 Skills UI 链路；R2 兑现 DSH 原生 Web UI 并修复 Windows 建窗死锁；R3 增加项目、GitHub 来源、Credential Manager 和隔离区入口 | R1/R2 做过真实 UI 复审，但相关大批改动仍在未提交工作区；R3 只有自动化与部分 UI 证据，外部授权和若干失败路径没有完成 |
+| 整改 R1–R3 | R1 修复假数据和 Skills UI 链路；R2 兑现 DSH 原生 Web UI 并修复 Windows 建窗死锁；R3 增加项目、GitHub 来源、Credential Manager 和隔离区入口 | R1/R2 做过真实 UI 复审；相关实现已落入本地提交。R3 外部授权和若干失败路径没有完成 |
 | Pi Project→Session | 4265376 之后有本地提交，建立 Pi 原生会话索引、项目树、RPC 操作和会话工作区 | 核心架构完成；V0–V5 主项已观察；tool-call 路由、OS 200% DPI、真实 Tab 遍历未覆盖 |
 | 当前 M0–M7 | 按产品结构和真实用户链路重新排序 | 这是唯一有效的当前路线图 |
 
@@ -23,8 +23,8 @@ AI / Coding Agent 的唯一开发规约见 [`AGENTS.md`](AGENTS.md)。README 保
 
 | 阶段 | 状态 | 代码事实 |
 |---|---|---|
-| M0 — 安全阻断 | **未完成** | 全局 ProjectSelector 仍可直接切换项目；GitHub 弹窗发出 close 事件但父级未处理；Skills 仍显示无作用域“回滚最新部署”和“M1 示例流水线”；Runtime 状态仍分散 |
-| M1 — 稳定控制台外壳 | 未开始，只有 Pi Sidebar 局部能力 | 当前仍保留 Home、Agents、Infra 入口；尚未形成只含 Pi、DSH、Skills-Hub 的固定模块栏，也没有三个模块各自完整的 Sidebar 记忆 |
+| M0 — 安全阻断 | **未完成** | Project 切换保护有 invoke 验收，全局选择器已离开 Home；Pi 树仍可挑项目。GitHub 弹窗 X/遮罩/Escape 关闭已观察。无作用域回滚与 M1 示例 API 已删除。Runtime 状态仍分散，仅建立 `runtimeStatus.ts` 落点 |
+| M1 — 稳定控制台外壳 | 部分推进，未完成 | 一级入口只剩 Pi、DSH、Skills-Hub；伪菜单和 Home/Agents/Infra 已删除。Pi Sidebar 可隐藏/调宽；三模块各自完整 Sidebar 记忆尚未做 |
 | M2 — Pi Project→Session 模型 | 核心架构完成，阶段未验收 | 索引/树/打开/重命名/重启恢复/缺失状态已观察；M0 全局 Project 切换仍未保护 |
 | M3 — Pi Session 工作区 | 核心架构完成，阶段未验收 | Prompt/stream/cancel/busy/settle 与重启恢复已观察；tool-call 与 Crash Recovery 未真实覆盖 |
 | M4 — DSH 控制台降噪 | 未开始 | DSH 原生 Web UI 已能承载，但普通栏仍展示 PID、URL、版本和 Boot Probe，尚未移入 Details |
@@ -162,10 +162,13 @@ GitHub 只维护两份 Markdown：README.md 是公开产品基线与状态摘要
 
 主要目录：
 
-    src/                 Svelte 5 + TypeScript 前端
-    src-tauri/src/       Rust Core、Tauri commands、SQLite 与宿主连接器
-    src-tauri/tests/     Rust 契约与集成测试
-    scripts/             CI 门禁、验收证据和开发辅助脚本
+    src/shell/           标题栏与模块侧栏
+    src/modules/         Pi、DSH、Skills-Hub 三个一级模块
+    src/platform/        前端 invoke 封装、runtime 落点、markdown
+    src/types/           按领域拆分的共享类型
+    src-tauri/src/       Rust Core：platform / pi / dsh / skills / hosts / ipc
+    src-tauri/tests/     按验收对象命名的契约与集成测试
+    scripts/ci/          假数据门禁与契约 fixture
+    scripts/evidence/    真实验收脚本
+    scripts/dev/         开发辅助与冒烟
     .github/workflows/   Windows CI
-
-当前工作区还包含整改 R1–R3 的未提交实现以及新加入的源文件。整理文档不等于这些实现已经验收，也不要用 reset/checkout 丢弃它们。
