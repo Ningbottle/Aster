@@ -22,7 +22,7 @@
       await piConsoleStore.prompt(text);
       draft = "";
     } catch {
-      // keep unsent draft; store already set error
+      // store rolled back the optimistic row; keep the draft for retry
     }
   }
 

@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { messagesFromNative, reducePiEvent } from "./sessionReducer";
+import {
+  isIgnorableResyncError,
+  messagesFromNative,
+  reducePiEvent,
+  rollbackOptimisticUser,
+  snapshotMatchesBinding,
+} from "./sessionReducer";
 
 describe("reducePiEvent", () => {
   it("ignores an event from a previous runtime instance", () => {
@@ -61,6 +67,69 @@ describe("reducePiEvent", () => {
     expect(next.messages).toHaveLength(1);
     expect(next.messages[0]?.role).toBe("user");
     expect(next.streamingText).toBe("");
+  });
+});
+
+describe("rollbackOptimisticUser", () => {
+  it("removes only the last matching optimistic user row", () => {
+    const messages = [
+      { role: "user" as const, content: "kept" },
+      { role: "user" as const, content: "failed" },
+    ];
+    const next = rollbackOptimisticUser(messages, "failed");
+    expect(next).toEqual([{ role: "user", content: "kept" }]);
+  });
+
+  it("leaves messages unchanged when the last row is not the failed text", () => {
+    const messages = [{ role: "assistant" as const, content: "ok" }];
+    expect(rollbackOptimisticUser(messages, "failed")).toBe(messages);
+    expect(rollbackOptimisticUser([], "failed")).toEqual([]);
+    expect(
+      rollbackOptimisticUser([{ role: "user" as const, content: "other" }], "failed"),
+    ).toHaveLength(1);
+  });
+});
+
+describe("snapshotMatchesBinding", () => {
+  const key = { runtimeInstanceId: 3, sessionId: "s-1", messageCount: 4 };
+
+  it("applies a same-binding snapshot that is at least as complete", () => {
+    expect(snapshotMatchesBinding(key, key, { ...key, messageCount: 6 })).toBe(true);
+    expect(snapshotMatchesBinding(key, key, key)).toBe(true);
+  });
+
+  it("rejects a snapshot after the UI moved to another session", () => {
+    expect(
+      snapshotMatchesBinding(
+        { runtimeInstanceId: 4, sessionId: "s-2", messageCount: 1 },
+        key,
+        { ...key, messageCount: 6 },
+      ),
+    ).toBe(false);
+    expect(
+      snapshotMatchesBinding(key, key, { runtimeInstanceId: 3, sessionId: "s-other", messageCount: 6 }),
+    ).toBe(false);
+    expect(snapshotMatchesBinding(null, key, { ...key, messageCount: 6 })).toBe(false);
+  });
+
+  it("rejects a snapshot that would wipe a newer local user turn", () => {
+    expect(
+      snapshotMatchesBinding({ ...key, messageCount: 5 }, key, { ...key, messageCount: 6 }),
+    ).toBe(false);
+  });
+
+  it("rejects an older incoming snapshot of the same binding", () => {
+    expect(
+      snapshotMatchesBinding(key, key, { ...key, messageCount: 2 }),
+    ).toBe(false);
+  });
+});
+
+describe("isIgnorableResyncError", () => {
+  it("ignores a missing active session after switch", () => {
+    expect(isIgnorableResyncError("no active Pi session")).toBe(true);
+    expect(isIgnorableResyncError({ message: "RpcFailed: no active Pi session" })).toBe(true);
+    expect(isIgnorableResyncError("timed out waiting for response")).toBe(false);
   });
 });
 

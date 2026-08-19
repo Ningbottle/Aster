@@ -1,7 +1,14 @@
 import { get, writable } from "svelte/store";
 import type { PiActiveSession, PiEventEnvelope, PiMessage, PiModel, PiProjectNode } from "../../types";
 import { piApi } from "./api";
-import { messagesFromNative, reducePiEvent } from "./sessionReducer";
+import {
+  isIgnorableResyncError,
+  messagesFromNative,
+  reducePiEvent,
+  rollbackOptimisticUser,
+  snapshotMatchesBinding,
+  type BindingKey,
+} from "./sessionReducer";
 
 export type PiTreeStatus = "idle" | "loading" | "ready" | "error";
 export type PiSessionStatus =
@@ -69,6 +76,7 @@ function createStore() {
   const { subscribe, update, set } = writable<PiConsoleState>(initial);
 
   let settleSync: Promise<void> | null = null;
+  let settleDirty = false;
 
   async function refreshTree(): Promise<void> {
     update((s) => ({ ...s, treeStatus: "loading", error: s.treeStatus === "error" ? s.error : null }));
@@ -177,6 +185,7 @@ function createStore() {
   async function prompt(message: string): Promise<void> {
     const text = message.trim();
     if (!text) return;
+    const captured = bindingKey(get({ subscribe }));
     update((s) => ({
       ...s,
       error: null,
@@ -187,41 +196,88 @@ function createStore() {
     try {
       await piApi.prompt(text);
     } catch (err) {
-      update((s) => ({
-        ...s,
-        error: toError(err),
-        sessionStatus: statusFromActive(s.active),
-      }));
+      update((s) => {
+        if (captured && !sameBinding(bindingKey(s), captured)) {
+          return s;
+        }
+        return {
+          ...s,
+          error: toError(err),
+          sessionStatus: statusFromActive(s.active),
+          messages: rollbackOptimisticUser(s.messages, text),
+        };
+      });
       throw err;
     }
   }
 
   async function abort(): Promise<void> {
+    const captured = bindingKey(get({ subscribe }));
     try {
       const active = await piApi.abort();
-      update((s) => applySnapshot(s, active));
+      update((s) => {
+        if (!captured || !sameBinding(bindingKey(s), captured)) {
+          return s;
+        }
+        return applySnapshot(s, active);
+      });
     } catch (err) {
-      update((s) => ({ ...s, error: toError(err) }));
+      update((s) => {
+        if (captured && !sameBinding(bindingKey(s), captured)) {
+          return s;
+        }
+        return { ...s, error: toError(err) };
+      });
       throw err;
     }
   }
 
   async function resyncFromNative(): Promise<void> {
+    settleDirty = true;
     if (settleSync) {
       await settleSync;
       return;
     }
     settleSync = (async () => {
       try {
-        const active = await piApi.snapshot();
-        update((s) => applySnapshot(s, active));
-      } catch (err) {
-        update((s) => ({ ...s, error: toError(err) }));
+        do {
+          settleDirty = false;
+          await runOneResync();
+        } while (settleDirty);
       } finally {
         settleSync = null;
       }
+      if (settleDirty) {
+        await resyncFromNative();
+      }
     })();
     await settleSync;
+  }
+
+  async function runOneResync(): Promise<void> {
+    const captured = bindingKey(get({ subscribe }));
+    if (!captured) return;
+    try {
+      const snap = await piApi.snapshot();
+      update((s) => {
+        const current = bindingKey(s);
+        const incoming: BindingKey = {
+          runtimeInstanceId: snap.runtimeInstanceId,
+          sessionId: snap.sessionId,
+          messageCount: Array.isArray(snap.messages) ? snap.messages.length : 0,
+        };
+        if (!snapshotMatchesBinding(current, captured, incoming)) {
+          return s;
+        }
+        return applySnapshot(s, snap);
+      });
+    } catch (err) {
+      if (isIgnorableResyncError(err)) return;
+      update((s) => {
+        if (!sameBinding(bindingKey(s), captured)) return s;
+        return { ...s, error: toError(err) };
+      });
+    }
   }
 
   async function removeIndexedSession(sessionId: string): Promise<void> {
@@ -280,7 +336,13 @@ function createStore() {
       if (event.eventType === "agent_start") {
         nextActive.isStreaming = !nextActive.isCompacting;
       }
-      if (event.eventType === "agent_end" || event.eventType === "agent_settled") {
+      if (event.eventType === "agent_end") {
+        if (typeof raw.isCompacting === "boolean") {
+          nextActive.isCompacting = raw.isCompacting;
+        }
+      }
+      // Native get_messages is complete at settled, not agent_end.
+      if (event.eventType === "agent_settled") {
         nextActive.isStreaming = false;
         if (typeof raw.isCompacting !== "boolean") {
           nextActive.isCompacting = false;
@@ -327,6 +389,21 @@ function createStore() {
     removeIndexedSession,
     reportError,
   };
+}
+
+function bindingKey(state: PiConsoleState): BindingKey | null {
+  if (!state.active) return null;
+  return {
+    runtimeInstanceId: state.active.runtimeInstanceId,
+    sessionId: state.active.sessionId,
+    messageCount: state.messages.length,
+  };
+}
+
+function sameBinding(current: BindingKey | null, captured: BindingKey): boolean {
+  return !!current
+    && current.runtimeInstanceId === captured.runtimeInstanceId
+    && current.sessionId === captured.sessionId;
 }
 
 export const piConsoleStore = createStore();
