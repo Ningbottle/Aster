@@ -5,6 +5,7 @@ pub mod evidence;
 pub mod host_profile;
 pub mod logging;
 pub mod pi_connector;
+pub mod pi_sessions;
 pub mod skill_flow;
 pub mod supervisor;
 
