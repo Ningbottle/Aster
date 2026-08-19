@@ -11,7 +11,7 @@ pub mod supervisor;
 
 use dsh_connector::{DshRuntime, DshServer, DshStatus};
 use evidence::{Stage, Status};
-use pi_connector::{PiRuntime, PiSession, SessionEvent};
+use pi_connector::{PiLaunchOptions, PiRuntime, PiSession, SessionEvent};
 use serde::Serialize;
 use skill_flow::M1_SKILL_SOURCE;
 use std::path::PathBuf;
@@ -133,6 +133,7 @@ fn pi_session_ensure(app: tauri::AppHandle, state: tauri::State<SessionSlot>) ->
         std::path::Path::new(&runtime.cli_js),
         &workspace,
         None, // 默认配置目录：Pi 自行使用自己的凭据与配置，Aster 不读取
+        &PiLaunchOptions::default(),
         move |event: SessionEvent| {
             let _ = app_handle.emit("pi-event", &event);
         },
@@ -157,6 +158,7 @@ fn pi_session_start(app: tauri::AppHandle, state: tauri::State<SessionSlot>) -> 
         std::path::Path::new(&runtime.cli_js),
         &workspace,
         None, // 默认配置目录：Pi 自行使用自己的凭据与配置，Aster 不读取
+        &PiLaunchOptions::default(),
         move |event: SessionEvent| {
             let _ = app_handle.emit("pi-event", &event);
         },
@@ -268,6 +270,7 @@ fn verify_skill_in_scope(
         cli_js,
         workspace,
         Some(scope_dir),
+        &PiLaunchOptions::default(),
         move |event: SessionEvent| {
             let _ = tx.send(event);
         },
@@ -1088,7 +1091,7 @@ pub fn selftest_m1() -> i32 {
 
     // 1. 真实会话：流式 + 工具执行
     println!("[INFO] starting real RPC session (Pi 自行使用其默认配置与凭据)...");
-    let session = match PiSession::start(&cli, &workspace, None, |_ev| {}) {
+    let session = match PiSession::start(&cli, &workspace, None, &PiLaunchOptions::default(), |_ev| {}) {
         Ok(s) => s,
         Err(e) => {
             println!("[FAIL] session start: {e}");
@@ -1139,7 +1142,7 @@ pub fn selftest_m1() -> i32 {
 
     // 3. 异常退出：流式中途杀进程 -> 无 settled
     let crash_ok = (|| -> bool {
-        let mut crash_session = match PiSession::start(&cli, &workspace, None, |_ev| {}) {
+        let mut crash_session = match PiSession::start(&cli, &workspace, None, &PiLaunchOptions::default(), |_ev| {}) {
             Ok(s) => s,
             Err(_) => return false,
         };

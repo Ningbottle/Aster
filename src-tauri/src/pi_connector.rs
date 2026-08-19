@@ -311,6 +311,22 @@ impl SessionWatcher {
     }
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct PiLaunchOptions {
+    pub session_path: Option<PathBuf>,
+}
+
+/// Launch args after `node <cli.js>`. `--session` selects a native file;
+/// it is not a second integration route.
+pub fn pi_launch_args(options: &PiLaunchOptions) -> Vec<String> {
+    let mut args = vec!["--mode".into(), "rpc".into()];
+    if let Some(path) = &options.session_path {
+        args.push("--session".into());
+        args.push(path.to_string_lossy().into_owned());
+    }
+    args
+}
+
 /// 一个活跃的 Pi RPC 会话。
 pub struct PiSession {
     child: Child,
@@ -329,10 +345,13 @@ impl PiSession {
         cli_js: &Path,
         cwd: &Path,
         config_dir: Option<&Path>,
+        options: &PiLaunchOptions,
         on_event: impl Fn(SessionEvent) + Send + 'static,
     ) -> std::io::Result<Self> {
         let mut cmd = Command::new("node");
-        cmd.arg(cli_js).args(["--mode", "rpc"]).current_dir(cwd);
+        cmd.arg(cli_js)
+            .args(pi_launch_args(options))
+            .current_dir(cwd);
         if let Some(dir) = config_dir {
             cmd.env("PI_CODING_AGENT_DIR", dir);
         }
@@ -476,6 +495,57 @@ impl PiSession {
             Duration::from_secs(60),
         )?;
         response_data(resp, "prompt").map(|_| ())
+    }
+
+    pub fn get_messages(&self) -> Result<Vec<Value>, String> {
+        let resp = self.request(json!({ "type": "get_messages" }), Duration::from_secs(30))?;
+        let data = response_data(resp, "get_messages")?;
+        Ok(data
+            .get("messages")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default())
+    }
+
+    pub fn get_session_stats(&self) -> Result<Value, String> {
+        let resp = self.request(
+            json!({ "type": "get_session_stats" }),
+            Duration::from_secs(30),
+        )?;
+        response_data(resp, "get_session_stats")
+    }
+
+    pub fn switch_session(&self, session_path: &Path) -> Result<bool, String> {
+        let session_path = session_path.to_string_lossy().into_owned();
+        let resp = self.request(
+            json!({ "type": "switch_session", "sessionPath": session_path }),
+            Duration::from_secs(30),
+        )?;
+        let data = response_data(resp, "switch_session")?;
+        Ok(data
+            .get("cancelled")
+            .and_then(Value::as_bool)
+            .unwrap_or(false))
+    }
+
+    pub fn set_thinking_level(&self, level: &str) -> Result<(), String> {
+        let resp = self.request(
+            json!({ "type": "set_thinking_level", "level": level }),
+            Duration::from_secs(30),
+        )?;
+        response_data(resp, "set_thinking_level").map(|_| ())
+    }
+
+    pub fn set_session_name(&self, name: &str) -> Result<(), String> {
+        let trimmed = name.trim();
+        if trimmed.is_empty() {
+            return Err("session name cannot be empty".into());
+        }
+        let resp = self.request(
+            json!({ "type": "set_session_name", "name": trimmed }),
+            Duration::from_secs(30),
+        )?;
+        response_data(resp, "set_session_name").map(|_| ())
     }
 
     /// 请求取消。真实 0.84.2 不保证回显 abort 响应，因此这里只发送请求；
@@ -634,6 +704,20 @@ mod tests {
         let obs = observe_fixture("crash.jsonl");
         assert!(!obs.settled, "进程被杀后流终止，不得出现 settled");
         assert!(obs.message_updates > 0, "崩溃前应有部分流式事件");
+    }
+
+    #[test]
+    fn launch_args_select_native_session_without_second_integration_route() {
+        assert_eq!(
+            pi_launch_args(&PiLaunchOptions::default()),
+            vec!["--mode", "rpc"]
+        );
+        assert_eq!(
+            pi_launch_args(&PiLaunchOptions {
+                session_path: Some(PathBuf::from(r"C:\fixture\s-1.jsonl")),
+            }),
+            vec!["--mode", "rpc", "--session", r"C:\fixture\s-1.jsonl"]
+        );
     }
 
     #[test]
