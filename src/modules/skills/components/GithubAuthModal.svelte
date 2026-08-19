@@ -1,7 +1,7 @@
 <script lang="ts">
-  import { invoke } from "@tauri-apps/api/core";
   import { onMount, createEventDispatcher, onDestroy } from "svelte";
-  import type { DeviceCodeResponse, DevicePollResult, GithubAuthStatus } from "../../../types";
+  import type { DeviceCodeResponse, GithubAuthStatus } from "../../../types";
+  import { githubApi } from "../api";
 
   export let show = false;
 
@@ -29,7 +29,7 @@
 
   async function checkAuthStatus() {
     try {
-      authStatus = await invoke<GithubAuthStatus>("github_token_status");
+      authStatus = await githubApi.tokenStatus();
     } catch (err: unknown) {
       errorMsg = String(err);
     }
@@ -87,7 +87,7 @@
       loading = true;
       stopPolling();
 
-      deviceResp = await invoke<DeviceCodeResponse>("github_device_start", { clientId: null });
+      deviceResp = await githubApi.deviceStart(null);
       remainingSeconds = deviceResp.expires_in || 900;
       isPolling = true;
 
@@ -106,10 +106,7 @@
       pollTimer = window.setInterval(async () => {
         if (!deviceResp) return;
         try {
-          const pollRes = await invoke<DevicePollResult>("github_device_poll", {
-            clientId: "Ov23liAsterDesktop",
-            deviceCode: deviceResp.device_code,
-          });
+          const pollRes = await githubApi.devicePoll("Ov23liAsterDesktop", deviceResp.device_code);
 
           if (pollRes.status === "success") {
             stopPolling();
@@ -142,7 +139,7 @@
       errorMsg = null;
       successMsg = null;
       savingPat = true;
-      await invoke("github_set_pat", { pat: patInput.trim() });
+      await githubApi.setPat(patInput.trim());
       patInput = "";
       successMsg = "PAT 凭据已加密保存至 Windows 凭据管理器！";
       await checkAuthStatus();
@@ -158,7 +155,7 @@
     try {
       errorMsg = null;
       successMsg = null;
-      await invoke("github_logout");
+      await githubApi.logout();
       stopPolling();
       deviceResp = null;
       await checkAuthStatus();
