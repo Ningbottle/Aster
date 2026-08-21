@@ -88,6 +88,7 @@ dependencies = [
  "tauri-build",
  "tempfile",
  "ureq",
+ "windows",
 ]
 
 [[package]]

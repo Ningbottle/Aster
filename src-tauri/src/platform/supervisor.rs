@@ -56,7 +56,7 @@ impl ChildProcess {
             .stdout(Stdio::null())
             .stderr(Stdio::null());
         Ok(Self {
-            child: cmd.spawn()?,
+            child: spawn_logged(&mut cmd, "child")?,
             stop_requested: false,
         })
     }
@@ -138,6 +138,16 @@ pub fn is_safe_version(v: &str) -> bool {
             .next()
             .map(|c| c.is_ascii_digit())
             .unwrap_or(false)
+}
+
+/// 孵化宿主子进程。
+///
+/// 这是 Windows Job Object（`JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`）的唯一附着点：
+/// Pi / DSH 不得再直接 `Command::spawn`。`npm install` 与 `taskkill` 不走这里。
+pub fn spawn_logged(cmd: &mut Command, host: &str) -> io::Result<Child> {
+    let child = super::winjob::spawn_in_host_job(cmd, host)?;
+    crate::diag::proc_event("spawn", host, child.id());
+    Ok(child)
 }
 
 /// 按终止整个进程树（taskkill /T /F）。供连接器在只有 pid 时使用。
@@ -225,5 +235,54 @@ mod tests {
             .unwrap()
             .is_none());
         child.stop_tree().unwrap();
+    }
+
+    #[test]
+    fn spawn_logged_returns_live_child() {
+        let mut cmd = Command::new("cmd");
+        cmd.args(["/C", "exit", "0"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        let mut child = spawn_logged(&mut cmd, "test").unwrap();
+        assert!(child.id() > 0);
+        let status = child.wait().unwrap();
+        assert!(status.success());
+    }
+
+    #[test]
+    fn closing_job_handle_kills_child() {
+        let job = super::super::winjob::Job::create_kill_on_close().unwrap();
+        let mut cmd = Command::new("cmd");
+        cmd.args(["/C", "ping", "-n", "20", "127.0.0.1"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        let mut child = super::super::winjob::spawn_in_job(&mut cmd, &job).unwrap();
+        assert!(
+            job.contains_process(std::os::windows::io::AsRawHandle::as_raw_handle(&child))
+                .unwrap()
+        );
+        drop(job);
+        let started = Instant::now();
+        let _status = child.wait().unwrap();
+        assert!(
+            started.elapsed() < Duration::from_secs(3),
+            "KILL_ON_JOB_CLOSE should terminate ping before it finishes"
+        );
+    }
+
+    #[test]
+    fn spawn_logged_child_is_in_host_job() {
+        let mut cmd = Command::new("cmd");
+        cmd.args(["/C", "ping", "-n", "20", "127.0.0.1"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        let mut child = spawn_logged(&mut cmd, "test").unwrap();
+        let in_job = super::super::winjob::host_job_contains(&child).unwrap();
+        let _ = kill_process_tree(child.id());
+        let _ = child.wait();
+        assert!(in_job, "spawn_logged must assign the child to the process-wide job");
     }
 }
