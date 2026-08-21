@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount, createEventDispatcher, onDestroy } from "svelte";
   import type { DeviceCodeResponse, GithubAuthStatus } from "../../../types";
+  import { shouldDiscardFlow } from "../deviceFlow";
   import { githubApi } from "../api";
 
   export let show = false;
@@ -22,6 +23,7 @@
   let remainingSeconds = 0;
   let countdownTimer: number | null = null;
   let isPolling = false;
+  let flowGeneration = 0;
 
   // PAT state
   let patInput = "";
@@ -69,6 +71,7 @@
   });
 
   function stopPolling() {
+    flowGeneration += 1;
     if (pollTimer) {
       clearInterval(pollTimer);
       pollTimer = null;
@@ -81,18 +84,23 @@
   }
 
   async function startDeviceFlow() {
+    const generation = flowGeneration + 1;
     try {
       errorMsg = null;
       successMsg = null;
       loading = true;
       stopPolling();
+      flowGeneration = generation;
 
       deviceResp = await githubApi.deviceStart(null);
+      if (shouldDiscardFlow({ show, flowGeneration, generation })) {
+        return;
+      }
       remainingSeconds = deviceResp.expires_in || 900;
       isPolling = true;
 
-      // 倒计时
       countdownTimer = window.setInterval(() => {
+        if (shouldDiscardFlow({ show, flowGeneration, generation })) return;
         if (remainingSeconds > 0) {
           remainingSeconds--;
         } else {
@@ -101,12 +109,12 @@
         }
       }, 1000);
 
-      // 轮询
       const intervalSec = Math.max(deviceResp.interval || 5, 5);
       pollTimer = window.setInterval(async () => {
-        if (!deviceResp) return;
+        if (shouldDiscardFlow({ show, flowGeneration, generation }) || !deviceResp) return;
         try {
           const pollRes = await githubApi.devicePoll("Ov23liAsterDesktop", deviceResp.device_code);
+          if (shouldDiscardFlow({ show, flowGeneration, generation })) return;
 
           if (pollRes.status === "success") {
             stopPolling();
@@ -118,15 +126,20 @@
             errorMsg = pollRes.error || "授权失败";
           }
         } catch (err: unknown) {
+          if (shouldDiscardFlow({ show, flowGeneration, generation })) return;
           stopPolling();
           errorMsg = `轮询出错: ${String(err)}`;
         }
       }, intervalSec * 1000);
 
     } catch (err: unknown) {
-      errorMsg = `发起授权失败: ${String(err)}`;
+      if (!shouldDiscardFlow({ show, flowGeneration, generation })) {
+        errorMsg = `发起授权失败: ${String(err)}`;
+      }
     } finally {
-      loading = false;
+      if (!shouldDiscardFlow({ show, flowGeneration, generation })) {
+        loading = false;
+      }
     }
   }
 
