@@ -31,6 +31,7 @@ pub fn run() {
             super::pi::pi_session_abort,
             super::pi::pi_session_stop,
             super::pi::pi_session_index_remove,
+            super::pi::pi_session_archive,
             super::pi::pi_runtime_snapshot,
             super::dsh::dsh_discover,
             super::dsh::dsh_install_managed,

@@ -131,6 +131,10 @@ const MIGRATIONS: &[&str] = &[
     CREATE INDEX idx_pi_session_project_modified
         ON pi_session_index (project_path, modified_at DESC);
     "#,
+    // 0006: archive flag for Pi native-session index (JSONL untouched).
+    r#"
+    ALTER TABLE pi_session_index ADD COLUMN archived INTEGER NOT NULL DEFAULT 0;
+    "#,
 ];
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -385,9 +389,11 @@ pub struct PiSessionIndexRecord {
     pub message_count: i64,
     pub availability: String,
     pub last_seen_at: String,
+    pub archived: bool,
 }
 
 fn map_pi_session_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<PiSessionIndexRecord> {
+    let archived: i64 = row.get(9)?;
     Ok(PiSessionIndexRecord {
         session_id: row.get(0)?,
         project_path: row.get(1)?,
@@ -398,6 +404,7 @@ fn map_pi_session_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<PiSessionInde
         message_count: row.get(6)?,
         availability: row.get(7)?,
         last_seen_at: row.get(8)?,
+        archived: archived != 0,
     })
 }
 
@@ -405,8 +412,8 @@ pub fn upsert_pi_session(conn: &Connection, record: &PiSessionIndexRecord) -> ru
     conn.execute(
         "INSERT INTO pi_session_index (
             session_id, project_path, session_rel_path, session_name,
-            created_at, modified_at, message_count, availability, last_seen_at
-         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+            created_at, modified_at, message_count, availability, last_seen_at, archived
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
          ON CONFLICT(session_id) DO UPDATE SET
             project_path = excluded.project_path,
             session_rel_path = excluded.session_rel_path,
@@ -414,7 +421,8 @@ pub fn upsert_pi_session(conn: &Connection, record: &PiSessionIndexRecord) -> ru
             modified_at = excluded.modified_at,
             message_count = excluded.message_count,
             availability = excluded.availability,
-            last_seen_at = excluded.last_seen_at",
+            last_seen_at = excluded.last_seen_at
+            /* archived intentionally not updated by rescan: user archive state wins */",
         rusqlite::params![
             record.session_id,
             record.project_path,
@@ -425,6 +433,7 @@ pub fn upsert_pi_session(conn: &Connection, record: &PiSessionIndexRecord) -> ru
             record.message_count,
             record.availability,
             record.last_seen_at,
+            record.archived,
         ],
     )?;
     Ok(())
@@ -436,9 +445,9 @@ pub fn list_pi_sessions_for_project(
 ) -> rusqlite::Result<Vec<PiSessionIndexRecord>> {
     let mut stmt = conn.prepare(
         "SELECT session_id, project_path, session_rel_path, session_name,
-                created_at, modified_at, message_count, availability, last_seen_at
+                created_at, modified_at, message_count, availability, last_seen_at, archived
          FROM pi_session_index
-         WHERE project_path = ?1
+         WHERE project_path = ?1 AND archived = 0
          ORDER BY modified_at DESC",
     )?;
     let rows = stmt.query_map(rusqlite::params![project_path], map_pi_session_row)?;
@@ -449,10 +458,28 @@ pub fn list_pi_sessions_for_project(
     Ok(res)
 }
 
-pub fn list_pi_session_index(conn: &Connection) -> rusqlite::Result<Vec<PiSessionIndexRecord>> {
+/// 树可见的 session（排除已归档）。`pi_project_tree_refresh` 与 build_tree 使用。
+pub fn list_pi_session_index_visible(conn: &Connection) -> rusqlite::Result<Vec<PiSessionIndexRecord>> {
     let mut stmt = conn.prepare(
         "SELECT session_id, project_path, session_rel_path, session_name,
-                created_at, modified_at, message_count, availability, last_seen_at
+                created_at, modified_at, message_count, availability, last_seen_at, archived
+         FROM pi_session_index
+         WHERE archived = 0
+         ORDER BY project_path ASC, modified_at DESC",
+    )?;
+    let rows = stmt.query_map([], map_pi_session_row)?;
+    let mut res = Vec::new();
+    for r in rows {
+        res.push(r?);
+    }
+    Ok(res)
+}
+
+/// 全部索引（含归档），供恢复/管理路径使用。
+pub fn list_pi_session_index_all(conn: &Connection) -> rusqlite::Result<Vec<PiSessionIndexRecord>> {
+    let mut stmt = conn.prepare(
+        "SELECT session_id, project_path, session_rel_path, session_name,
+                created_at, modified_at, message_count, availability, last_seen_at, archived
          FROM pi_session_index
          ORDER BY project_path ASC, modified_at DESC",
     )?;
@@ -470,7 +497,7 @@ pub fn get_pi_session(
 ) -> rusqlite::Result<Option<PiSessionIndexRecord>> {
     let mut stmt = conn.prepare(
         "SELECT session_id, project_path, session_rel_path, session_name,
-                created_at, modified_at, message_count, availability, last_seen_at
+                created_at, modified_at, message_count, availability, last_seen_at, archived
          FROM pi_session_index
          WHERE session_id = ?1",
     )?;
@@ -479,6 +506,26 @@ pub fn get_pi_session(
         Some(r) => Ok(Some(r?)),
         None => Ok(None),
     }
+}
+
+/// 设置 session 的归档标记。仅标记索引，绝不移动/修改 JSONL。
+/// 未知 session_id 返回可诊断错误（含 id），避免静默无效操作。
+pub fn set_pi_session_archived(
+    conn: &Connection,
+    session_id: &str,
+    archived: bool,
+) -> rusqlite::Result<()> {
+    let changed = conn.execute(
+        "UPDATE pi_session_index SET archived = ?2 WHERE session_id = ?1",
+        rusqlite::params![session_id, archived],
+    )?;
+    if changed == 0 {
+        return Err(rusqlite::Error::SqliteFailure(
+            rusqlite::ffi::Error::new(19), // SQLITE_CONSTRAINT: unknown id
+            Some(format!("归档目标不存在: {session_id}")),
+        ));
+    }
+    Ok(())
 }
 
 pub fn mark_pi_sessions_unseen(
@@ -645,7 +692,7 @@ mod tests {
     #[test]
     fn migration_0005_pi_session_index_round_trips_without_conversation_text() {
         let mut conn = open_connection(Path::new(":memory:")).unwrap();
-        assert_eq!(migrate(&mut conn).unwrap(), 5);
+        assert_eq!(migrate(&mut conn).unwrap(), 6);
 
         let sql: String = conn
             .query_row(
@@ -658,6 +705,119 @@ mod tests {
         assert!(!lower.contains("conversation"));
         assert!(!lower.contains("prompt"));
         assert!(!lower.contains("tool_output"));
+    }
+
+    #[test]
+    fn migration_0006_adds_archived_column_to_pi_session_index() {
+        let mut conn = open_connection(Path::new(":memory:")).unwrap();
+        assert_eq!(migrate(&mut conn).unwrap(), 6);
+
+        let cols: Vec<String> = conn
+            .prepare(
+                "SELECT name FROM pragma_table_info('pi_session_index') ORDER BY cid",
+            )
+            .unwrap()
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap();
+        assert!(cols.contains(&"archived".to_string()), "cols: {cols:?}");
+
+        // Legacy rows (migrated from v5) default to archived=0.
+        let legacy = open_connection(Path::new(":memory:")).unwrap();
+        let legacy_sql = &MIGRATIONS[..5];
+        for sql in legacy_sql {
+            legacy.execute_batch(sql).unwrap();
+        }
+        legacy.pragma_update(None, "user_version", 5).unwrap();
+        // simulate a v5 row
+        legacy
+            .execute(
+                "INSERT INTO pi_session_index (
+                    session_id, project_path, session_rel_path, session_name,
+                    created_at, modified_at, message_count, availability, last_seen_at
+                 ) VALUES ('s-legacy', 'C:/p', 'cwd/s.jsonl', NULL,
+                    '2026-08-19T00:00:00Z', '2026-08-19T00:00:00Z', 0, 'available', '2026-08-19T00:00:00Z')",
+                [],
+            )
+            .unwrap();
+        // apply migration 0006 only
+        legacy.execute_batch(MIGRATIONS[5]).unwrap();
+        legacy.pragma_update(None, "user_version", 6).unwrap();
+        let archived: i64 = legacy
+            .query_row(
+                "SELECT archived FROM pi_session_index WHERE session_id='s-legacy'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(archived, 0, "legacy rows must default to not archived");
+    }
+
+    #[test]
+    fn pi_session_archive_marks_index_and_visible_list_hides_it() {
+        let mut conn = open_connection(Path::new(":memory:")).unwrap();
+        migrate(&mut conn).unwrap();
+
+        upsert_pi_session(
+            &conn,
+            &fixture_session(
+                "s-a",
+                r"C:\fixture\project-a",
+                "cwd-a/s-a.jsonl",
+                Some("alpha"),
+                "2026-08-19T00:00:00Z",
+                1,
+            ),
+        )
+        .unwrap();
+        upsert_pi_session(
+            &conn,
+            &fixture_session(
+                "s-b",
+                r"C:\fixture\project-a",
+                "cwd-a/s-b.jsonl",
+                Some("beta"),
+                "2026-08-19T00:00:01Z",
+                2,
+            ),
+        )
+        .unwrap();
+
+        let visible = list_pi_session_index_visible(&conn).unwrap();
+        assert_eq!(visible.len(), 2);
+
+        set_pi_session_archived(&conn, "s-a", true).unwrap();
+        let visible = list_pi_session_index_visible(&conn).unwrap();
+        assert_eq!(visible.len(), 1);
+        assert_eq!(visible[0].session_id, "s-b");
+        assert_eq!(visible[0].archived, false);
+
+        let all = list_pi_session_index_all(&conn).unwrap();
+        assert_eq!(all.len(), 2);
+        let s_a = all.iter().find(|r| r.session_id == "s-a").unwrap();
+        assert_eq!(s_a.archived, true);
+        assert!(
+            s_a.session_rel_path.ends_with("s-a.jsonl"),
+            "archive must not rewrite the rel path (JSONL untouched)"
+        );
+
+        set_pi_session_archived(&conn, "s-a", false).unwrap();
+        let visible = list_pi_session_index_visible(&conn).unwrap();
+        assert_eq!(visible.len(), 2);
+    }
+
+    #[test]
+    fn pi_session_archive_unknown_id_is_diagnostic_error() {
+        let mut conn = open_connection(Path::new(":memory:")).unwrap();
+        migrate(&mut conn).unwrap();
+        let err = set_pi_session_archived(&conn, "no-such", true).unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("no-such")
+                && (msg.contains("归档") || msg.to_lowercase().contains("archiv")),
+            "unknown id must be a diagnostic error, got {msg}"
+        );
     }
 
     fn fixture_session(
@@ -678,6 +838,7 @@ mod tests {
             message_count: count,
             availability: "available".into(),
             last_seen_at: "2026-08-19T12:00:00Z".into(),
+            archived: false,
         }
     }
 

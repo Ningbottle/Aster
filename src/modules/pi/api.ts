@@ -18,6 +18,8 @@ export const piApi = {
   stop: () => invoke<void>("pi_session_stop"),
   removeIndex: (sessionId: string) =>
     invoke<PiProjectNode[]>("pi_session_index_remove", { sessionId }),
+  archive: (sessionId: string, archived: boolean) =>
+    invoke<PiProjectNode[]>("pi_session_archive", { sessionId, archived }),
   availableModels: () => invoke<import("../../types").PiModel[]>("pi_get_available_models"),
   runtimeSnapshot: () =>
     invoke<import("../../types").PiRuntimeSnapshot>("pi_runtime_snapshot"),

@@ -8,6 +8,7 @@
   export let createSession: (projectPath: string) => Promise<void>;
   export let openSession: (projectPath: string, sessionId: string) => Promise<void>;
   export let removeFromIndex: (sessionId: string) => Promise<void>;
+  export let archiveSession: (sessionId: string, archived: boolean) => Promise<void>;
 
   async function run(action: () => Promise<void>) {
     try {
@@ -118,6 +119,15 @@
                   on:click={() => run(() => removeFromIndex(session.sessionId))}
                 >
                   从索引移除
+                </button>
+              {:else}
+                <button
+                  type="button"
+                  class="forget"
+                  title="归档后从项目树隐藏，原会话文件不变"
+                  on:click={() => run(() => archiveSession(session.sessionId, true))}
+                >
+                  归档
                 </button>
               {/if}
             </li>

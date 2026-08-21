@@ -75,6 +75,18 @@ pub fn decide_remove_project(
     }
 }
 
+/// 归档/取消归档某 session。活动/占用槽位的 session 拒绝归档（与 M0 守卫同语义），
+/// 未占用时允许（含取消归档）。
+pub fn decide_archive_session(
+    binding: Option<&PiActiveBinding>,
+    session_id: &str,
+) -> Result<(), String> {
+    match binding {
+        Some(b) if b.session_id == session_id => Err(active_session_blocks_project_change(b)),
+        _ => Ok(()),
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct PiRuntimeSnapshotDto {

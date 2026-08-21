@@ -173,6 +173,9 @@
           createSession={(path) => piConsoleStore.createSession(path)}
           openSession={(path, id) => piConsoleStore.openSession(path, id)}
           removeFromIndex={(id) => piConsoleStore.removeIndexedSession(id)}
+          archiveSession={(id, archived) =>
+            piConsoleStore.archiveSession(id, archived)
+          }
         />
       {:else if isSkills}
         <div id="side-tools">

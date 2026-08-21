@@ -2,8 +2,9 @@
 
 use aster_lib::pi::connector::PiRuntime;
 use aster_lib::pi::runtime::{
-    decide_activate_project, decide_remove_project, decide_set_pi_host_workdir,
-    ActivateProjectDecision, FakePiController, PiOpenError, PiRuntimeManager,
+    decide_activate_project, decide_archive_session, decide_remove_project,
+    decide_set_pi_host_workdir, ActivateProjectDecision, FakePiController, PiOpenError,
+    PiRuntimeManager,
 };
 use aster_lib::pi::sessions::{
     project_paths_equal, resolve_session_path, scan_session_root, scan_session_root_with_limits,
@@ -399,6 +400,31 @@ fn pi_host_workdir_refused_while_bound_allowed_after_stop() {
     assert!(err.contains("活动 Pi Session"));
     mgr.stop().unwrap();
     assert!(decide_set_pi_host_workdir(mgr.bound_binding().as_ref()).is_ok());
+}
+
+#[test]
+fn session_archive_refused_while_bound_allowed_after_stop() {
+    let tmp = tempfile::tempdir().unwrap();
+    let project_a = tmp.path().join("proj-a");
+    fs::create_dir_all(&project_a).unwrap();
+    let a1 = write_session_file(&project_a, "a1.jsonl");
+    let mgr = PiRuntimeManager::with_fake(FakePiController::new());
+    mgr.open_session(&dummy_runtime(), &project_a, &a1, sink())
+        .unwrap();
+
+    // Bound (active) session: archive must be refused.
+    let bound = mgr.bound_binding().unwrap();
+    let err = decide_archive_session(Some(&bound), "a1").unwrap_err();
+    assert!(err.contains("活动 Pi Session"), "{err}");
+
+    // Unrelated session id is allowed while bound.
+    assert!(decide_archive_session(Some(&bound), "other-session").is_ok());
+    // Cancelling archive (archived=false) on a bound session is also refused.
+    assert!(decide_archive_session(Some(&bound), "a1").is_err());
+
+    mgr.stop().unwrap();
+    assert!(mgr.bound_binding().is_none());
+    assert!(decide_archive_session(None, "a1").is_ok());
 }
 
 #[test]

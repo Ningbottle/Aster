@@ -327,6 +327,15 @@ function createStore() {
     }
   }
 
+  async function archiveSession(sessionId: string, archived: boolean): Promise<void> {
+    try {
+      const tree = await piApi.archive(sessionId, archived);
+      update((s) => ({ ...s, tree, treeStatus: "ready" }));
+    } catch (err) {
+      update((s) => ({ ...s, error: toError(err) }));
+    }
+  }
+
   function reportError(err: unknown): void {
     update((s) => ({ ...s, error: toError(err) }));
   }
@@ -464,6 +473,7 @@ function createStore() {
     refreshRuntime,
     snapshot,
     removeIndexedSession,
+    archiveSession,
     reportError,
   };
 }

@@ -116,6 +116,10 @@
   "PiSessionIndexRemoveArgs": {
     "sessionId": "session-1"
   },
+  "PiSessionArchiveArgs": {
+    "sessionId": "session-1",
+    "archived": true
+  },
   "PiRuntimeSnapshotDto_sample": {
     "lifecycle": "ready",
     "hasLockedInstall": true,

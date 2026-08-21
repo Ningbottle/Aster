@@ -6,9 +6,10 @@
 //!   枚举 snake_case 命名以及路径安全解析。
 
 use aster_lib::ipc::pi::{
-    PiActiveSessionDto, PiEventEnvelopeDto, PiProjectNodeDto, PiSessionCreateArgs,
-    PiSessionIndexRemoveArgs, PiSessionOpenArgs, PiSessionPromptArgs, PiSessionSetModelArgs,
-    PiSessionSetNameArgs, PiSessionSetThinkingArgs, PiSessionSummaryDto, PERMISSION_SUMMARY,
+    PiActiveSessionDto, PiEventEnvelopeDto, PiProjectNodeDto, PiSessionArchiveArgs,
+    PiSessionCreateArgs, PiSessionIndexRemoveArgs, PiSessionOpenArgs, PiSessionPromptArgs,
+    PiSessionSetModelArgs, PiSessionSetNameArgs, PiSessionSetThinkingArgs, PiSessionSummaryDto,
+    PERMISSION_SUMMARY,
 };
 use aster_lib::pi::runtime::PiRuntimeSnapshotDto;
 use aster_lib::skills::{
@@ -422,6 +423,11 @@ fn contract_pi_session_command_payloads_are_camel_case() {
     let forget: PiSessionIndexRemoveArgs =
         serde_json::from_value(fixtures["PiSessionIndexRemoveArgs"].clone()).unwrap();
     assert_eq!(forget.session_id, "session-1");
+
+    let archive: PiSessionArchiveArgs =
+        serde_json::from_value(fixtures["PiSessionArchiveArgs"].clone()).unwrap();
+    assert_eq!(archive.session_id, "session-1");
+    assert_eq!(archive.archived, true);
 
     let snap: PiRuntimeSnapshotDto =
         serde_json::from_value(fixtures["PiRuntimeSnapshotDto_sample"].clone()).unwrap();

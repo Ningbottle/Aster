@@ -106,6 +106,13 @@ pub struct PiSessionIndexRemoveArgs {
     pub session_id: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PiSessionArchiveArgs {
+    pub session_id: String,
+    pub archived: bool,
+}
+
 pub type PiEventEnvelopeDto = PiEventEnvelope;
 
 #[tauri::command]
@@ -136,13 +143,14 @@ pub async fn pi_project_tree_refresh(
             message_count: entry.message_count as i64,
             availability: availability.into(),
             last_seen_at: now.clone(),
+            archived: false, // 重新扫描不重置用户归档状态：upsert 不覆盖 archived
         };
         db::upsert_pi_session(&conn, &rec).map_err(|e| e.to_string())?;
         seen.push(entry.session_id);
     }
     db::mark_pi_sessions_unseen(&conn, &seen).map_err(|e| e.to_string())?;
 
-    for rec in db::list_pi_session_index(&conn).map_err(|e| e.to_string())? {
+    for rec in db::list_pi_session_index_visible(&conn).map_err(|e| e.to_string())? {
         if rec.availability == "available" && !Path::new(&rec.project_path).is_dir() {
             db::mark_pi_session_project_missing(&conn, &rec.session_id)
                 .map_err(|e| e.to_string())?;
@@ -282,6 +290,21 @@ pub async fn pi_session_index_remove(
     build_tree(&conn, state.active_binding())
 }
 
+#[tauri::command]
+pub async fn pi_session_archive(
+    state: State<'_, PiRuntimeManager>,
+    session_id: String,
+    archived: bool,
+) -> Result<Vec<PiProjectNodeDto>, String> {
+    let session_id = session_id.trim();
+    // 活动/占用槽位的 session 不可归档：先停止 Session 再归档（与 M0 守卫同语义）。
+    crate::pi::runtime::decide_archive_session(state.bound_binding().as_ref(), session_id)
+        .map_err(|e| e.to_string())?;
+    let (_layout, conn) = open_layout_and_db()?;
+    db::set_pi_session_archived(&conn, session_id, archived).map_err(|e| e.to_string())?;
+    build_tree(&conn, state.active_binding())
+}
+
 fn open_err(err: PiOpenError) -> String {
     err.to_string()
 }
@@ -314,7 +337,7 @@ fn build_tree(
     active: Option<crate::pi_runtime::PiActiveBinding>,
 ) -> Result<Vec<PiProjectNodeDto>, String> {
     let recent = db::list_recent_projects(conn).map_err(|e| e.to_string())?;
-    let indexed = db::list_pi_session_index(conn).map_err(|e| e.to_string())?;
+    let indexed = db::list_pi_session_index_visible(conn).map_err(|e| e.to_string())?;
     let mut groups: BTreeMap<String, PiProjectNodeDto> = BTreeMap::new();
 
     for rec in recent {
@@ -395,6 +418,7 @@ fn persist_snapshot(snap: &PiActiveSnapshot) -> Result<(), String> {
             .unwrap_or(snap.messages.len() as u64) as i64,
         availability: "available".into(),
         last_seen_at: now,
+        archived: false,
     };
     db::upsert_pi_session(&conn, &rec).map_err(|e| e.to_string())
 }
