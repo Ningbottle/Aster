@@ -219,7 +219,7 @@ const contractSamples = {
   },
   HostWorkdirSetArgs: {
     host: "pi",
-    workdir: "C:\\Workspace\\my-project\\pi",
+    path: "C:\\Workspace\\my-project\\pi",
   },
   HostWorkdirGetArgs: {
     host: "pi",

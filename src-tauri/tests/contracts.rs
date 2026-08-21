@@ -267,7 +267,7 @@ struct ProjectPathArgs {
 #[derive(Debug, Deserialize)]
 struct HostWorkdirSetArgs {
     host: String,
-    workdir: String,
+    path: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -321,7 +321,7 @@ fn contract_r3_project_and_host_workdir_fixtures() {
         serde_json::from_value(fixtures["HostWorkdirSetArgs"].clone())
             .expect("HostWorkdirSetArgs 应当反序列化成功");
     assert_eq!(set_args.host, "pi");
-    assert_eq!(set_args.workdir, r"C:\Workspace\my-project\pi");
+    assert_eq!(set_args.path, r"C:\Workspace\my-project\pi");
 
     let get_args: HostWorkdirGetArgs =
         serde_json::from_value(fixtures["HostWorkdirGetArgs"].clone())
