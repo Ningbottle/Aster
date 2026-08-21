@@ -11,13 +11,16 @@
   import {
     clampSidebarWidth,
     isEditableTarget,
+    isSidebarVisible,
     loadPiSidebarHidden,
     loadPiSidebarWidth,
+    loadSkillsSidebarHidden,
     PI_SIDEBAR_DEFAULT,
     PI_SIDEBAR_MAX,
     PI_SIDEBAR_MIN,
     savePiSidebarHidden,
     savePiSidebarWidth,
+    saveSkillsSidebarHidden,
   } from "./sidebarPreferences";
 
   export let activeView: ViewId = "pi";
@@ -33,10 +36,11 @@
   let sidebarEl: HTMLElement;
   let piWidth = PI_SIDEBAR_DEFAULT;
   let piHidden = false;
+  let skillsHidden = false;
 
   $: isSkills = activeView === "skills";
   $: isPi = activeView === "pi";
-  $: noSidebar = activeView === "dsh" || (isPi && piHidden);
+  $: noSidebar = !isSidebarVisible(activeView, piHidden, skillsHidden);
   $: currentWidth = isPi ? piWidth : isSkills ? sideWidths.slim : sideWidths.full;
 
   onMount(() => {
@@ -54,6 +58,7 @@
     }
     piWidth = loadPiSidebarWidth();
     piHidden = loadPiSidebarHidden();
+    skillsHidden = loadSkillsSidebarHidden();
     if (isPi) {
       piConsoleStore.refreshTree().catch((err) => {
         console.debug("Pi tree refresh failed:", err);
@@ -116,10 +121,15 @@
 
   function handleGlobalKey(e: KeyboardEvent) {
     if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== "b") return;
-    if (!isPi) return;
     if (isEditableTarget(e.target)) return;
-    e.preventDefault();
-    piHidden = savePiSidebarHidden(!piHidden);
+    if (isPi) {
+      e.preventDefault();
+      piHidden = savePiSidebarHidden(!piHidden);
+    } else if (isSkills) {
+      e.preventDefault();
+      skillsHidden = saveSkillsSidebarHidden(!skillsHidden);
+    }
+    // dsh: 无 Sidebar，Ctrl+B 不消费事件，也不写任何 preference。
   }
 
   async function openProjectPicker() {

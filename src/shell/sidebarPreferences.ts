@@ -1,9 +1,12 @@
+import type { ViewId } from "../types";
+
 export const PI_SIDEBAR_MIN = 220;
 export const PI_SIDEBAR_MAX = 420;
 export const PI_SIDEBAR_DEFAULT = 280;
 
 const WIDTH_KEY = "aster.sidebar.pi.width";
 const HIDDEN_KEY = "aster.sidebar.pi.hidden";
+const SKILLS_HIDDEN_KEY = "aster.sidebar.skills.hidden";
 
 export function clampSidebarWidth(value: number): number {
   if (!Number.isFinite(value)) return PI_SIDEBAR_DEFAULT;
@@ -30,21 +33,46 @@ export function savePiSidebarWidth(value: number): number {
   return next;
 }
 
-export function loadPiSidebarHidden(): boolean {
+function loadSidebarHidden(key: string): boolean {
   try {
-    return localStorage.getItem(HIDDEN_KEY) === "1";
+    return localStorage.getItem(key) === "1";
   } catch {
     return false;
   }
 }
 
-export function savePiSidebarHidden(hidden: boolean): boolean {
+function saveSidebarHidden(key: string, hidden: boolean): boolean {
   try {
-    localStorage.setItem(HIDDEN_KEY, hidden ? "1" : "0");
+    localStorage.setItem(key, hidden ? "1" : "0");
   } catch (err) {
-    console.debug("Failed to persist Pi sidebar visibility:", err);
+    console.debug("Failed to persist sidebar visibility:", err);
   }
   return hidden;
+}
+
+export function loadPiSidebarHidden(): boolean {
+  return loadSidebarHidden(HIDDEN_KEY);
+}
+
+export function savePiSidebarHidden(hidden: boolean): boolean {
+  return saveSidebarHidden(HIDDEN_KEY, hidden);
+}
+
+export function loadSkillsSidebarHidden(): boolean {
+  return loadSidebarHidden(SKILLS_HIDDEN_KEY);
+}
+
+export function saveSkillsSidebarHidden(hidden: boolean): boolean {
+  return saveSidebarHidden(SKILLS_HIDDEN_KEY, hidden);
+}
+
+export function isSidebarVisible(
+  view: ViewId,
+  piHidden: boolean,
+  skillsHidden: boolean,
+): boolean {
+  if (view === "dsh") return false;
+  return view === "pi" ? !piHidden : !skillsHidden;
 }
 
 export function isEditableTarget(target: EventTarget | null): boolean {
