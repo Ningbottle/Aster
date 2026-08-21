@@ -13,7 +13,7 @@
     ViewId,
   } from "./types";
   import { formatInvokeError, invoke, isTauriRuntime } from "./platform/ipc";
-  import { emptyHostRuntimeFacts } from "./platform/runtimeStatus";
+  import { setDshRuntimeFacts } from "./platform/runtimeStatus";
   import { piConsoleStore } from "./modules/pi/store";
 
   import TitleBar from "./shell/TitleBar.svelte";
@@ -48,7 +48,6 @@
   let skillStatus: Record<string, unknown> | null = null;
   let skills: SkillItem[] = [];
   let lastBackendError: string | null = null;
-  let runtimeFacts = emptyHostRuntimeFacts();
 
   let dshViewRef: DshModule;
   let unlisten: (() => void) | null = null;
@@ -67,9 +66,10 @@
       skillStatus = await invoke("skill_status");
       dshRuntimes = await invoke<DshRuntime[]>("dsh_discover");
       dshStatus = await invoke<DshStatus | null>("dsh_status");
+      setDshRuntimeFacts(dshStatus);
       discoveredHosts = await invoke<DiscoveredHost[]>("host_profiles_list", {});
       skills = await invoke<SkillItem[]>("skills_list");
-      runtimeFacts = { pi: runtimeFacts.pi, dsh: dshStatus };
+      await piConsoleStore.refreshRuntime();
       lastBackendError = null;
     } catch (err: unknown) {
       console.error("refreshData invoke error:", err);
@@ -196,7 +196,6 @@
         <DshModule
           bind:this={dshViewRef}
           {dshRuntimes}
-          {dshStatus}
           onRefresh={refreshData}
         />
       </section>

@@ -34,6 +34,17 @@
     }
   }
 
+  async function confirmStopThenChoose() {
+    const offer = $piConsoleStore.projectBlockOffer;
+    if (!offer) return;
+    try {
+      await piConsoleStore.stopThenChoose(offer.nextPath);
+      await onRefresh();
+    } catch {
+      // error is visible via store / projectBlockOffer
+    }
+  }
+
   async function installManagedPi() {
     installing = true;
     installMsg = "正在安装 Pi 0.84.2 到 Aster 管理目录...";
@@ -48,6 +59,24 @@
     }
   }
 </script>
+
+{#if $piConsoleStore.projectBlockOffer}
+  <div class="busy" role="alertdialog">
+    <p>{$piConsoleStore.projectBlockOffer.message}</p>
+    <div class="busy-actions">
+      <button type="button" class="btn sm" on:click={() => piConsoleStore.dismissProjectBlock()}>
+        保持当前会话
+      </button>
+      <button
+        type="button"
+        class="btn sm danger-ghost"
+        on:click={confirmStopThenChoose}
+      >
+        停止 Session 后切换
+      </button>
+    </div>
+  </div>
+{/if}
 
 {#if $piConsoleStore.busyOffer}
   <div class="busy" role="alertdialog">

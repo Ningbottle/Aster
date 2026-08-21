@@ -2,8 +2,8 @@
 
 use aster_lib::pi::connector::PiRuntime;
 use aster_lib::pi::runtime::{
-    decide_activate_project, decide_remove_project, ActivateProjectDecision, FakePiController,
-    PiOpenError, PiRuntimeManager,
+    decide_activate_project, decide_remove_project, decide_set_pi_host_workdir,
+    ActivateProjectDecision, FakePiController, PiOpenError, PiRuntimeManager,
 };
 use aster_lib::pi::sessions::{
     project_paths_equal, resolve_session_path, scan_session_root, scan_session_root_with_limits,
@@ -383,6 +383,74 @@ fn project_ops_allowed_after_stop() {
         ActivateProjectDecision::Proceed
     );
     assert!(decide_remove_project(None, &project_a).is_ok());
+}
+
+#[test]
+fn pi_host_workdir_refused_while_bound_allowed_after_stop() {
+    let tmp = tempfile::tempdir().unwrap();
+    let project_a = tmp.path().join("proj-a");
+    fs::create_dir_all(&project_a).unwrap();
+    let a1 = write_session_file(&project_a, "a1.jsonl");
+    let mgr = PiRuntimeManager::with_fake(FakePiController::new());
+    mgr.open_session(&dummy_runtime(), &project_a, &a1, sink())
+        .unwrap();
+    let bound = mgr.bound_binding().unwrap();
+    let err = decide_set_pi_host_workdir(Some(&bound)).unwrap_err();
+    assert!(err.contains("活动 Pi Session"));
+    mgr.stop().unwrap();
+    assert!(decide_set_pi_host_workdir(mgr.bound_binding().as_ref()).is_ok());
+}
+
+#[test]
+fn project_activate_refused_while_crashed_until_stop() {
+    let tmp = tempfile::tempdir().unwrap();
+    let project_a = tmp.path().join("proj-a");
+    let project_b = tmp.path().join("proj-b");
+    fs::create_dir_all(&project_a).unwrap();
+    fs::create_dir_all(&project_b).unwrap();
+    let a1 = write_session_file(&project_a, "a1.jsonl");
+    let ctrl = FakePiController::new();
+    let mgr = PiRuntimeManager::with_fake(Arc::clone(&ctrl));
+    mgr.open_session(&dummy_runtime(), &project_a, &a1, sink())
+        .unwrap();
+    ctrl.force_closed.store(true, Ordering::SeqCst);
+    assert!(mgr.active_binding().is_none());
+    assert_eq!(mgr.runtime_snapshot(true).lifecycle, "crashed");
+    let bound = mgr.bound_binding().expect("slot still occupied");
+    let err = decide_activate_project(Some(&bound), &project_b).unwrap_err();
+    assert!(err.contains("活动 Pi Session"));
+    mgr.stop().unwrap();
+    assert!(mgr.bound_binding().is_none());
+    assert_eq!(
+        decide_activate_project(None, &project_b).unwrap(),
+        ActivateProjectDecision::Proceed
+    );
+}
+
+#[test]
+fn stop_timeout_keeps_slot_and_blocks_project_change() {
+    let tmp = tempfile::tempdir().unwrap();
+    let project_a = tmp.path().join("proj-a");
+    let project_b = tmp.path().join("proj-b");
+    fs::create_dir_all(&project_a).unwrap();
+    fs::create_dir_all(&project_b).unwrap();
+    let a1 = write_session_file(&project_a, "a1.jsonl");
+    let ctrl = FakePiController::new();
+    let mgr = PiRuntimeManager::with_fake(Arc::clone(&ctrl));
+    mgr.open_session(&dummy_runtime(), &project_a, &a1, sink())
+        .unwrap();
+    ctrl.fail_next_stop.store(true, Ordering::SeqCst);
+    let err = mgr
+        .stop()
+        .expect_err("timeout must not look like a clean stop");
+    assert!(
+        err.contains("未能停止") || err.to_lowercase().contains("still alive"),
+        "{err}"
+    );
+    let bound = mgr.bound_binding().expect("slot must stay occupied");
+    let blocked = decide_activate_project(Some(&bound), &project_b).unwrap_err();
+    assert!(blocked.contains("活动 Pi Session"));
+    assert!(decide_set_pi_host_workdir(mgr.bound_binding().as_ref()).is_err());
 }
 
 #[test]

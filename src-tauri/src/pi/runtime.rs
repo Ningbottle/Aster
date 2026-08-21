@@ -48,10 +48,17 @@ pub fn decide_activate_project(
 ) -> Result<ActivateProjectDecision, String> {
     match binding {
         None => Ok(ActivateProjectDecision::Proceed),
-        Some(b) if project_paths_equal(&b.project_path, next) => {
-            Ok(ActivateProjectDecision::Noop)
-        }
+        Some(b) if project_paths_equal(&b.project_path, next) => Ok(ActivateProjectDecision::Noop),
         Some(b) => Err(active_session_blocks_project_change(b)),
+    }
+}
+
+/// Setting or clearing Pi host_workdir while a slot is occupied would silently
+/// change `pi::workspace()` without touching the live session cwd.
+pub fn decide_set_pi_host_workdir(binding: Option<&PiActiveBinding>) -> Result<(), String> {
+    match binding {
+        Some(b) => Err(active_session_blocks_project_change(b)),
+        None => Ok(()),
     }
 }
 
@@ -258,6 +265,12 @@ impl PiRuntimeManager {
         Some(binding_of(active))
     }
 
+    /// Occupied slot binding, including a crashed process until `stop()` clears it.
+    pub fn bound_binding(&self) -> Option<PiActiveBinding> {
+        let guard = self.active.lock().ok()?;
+        Some(binding_of(guard.as_ref()?))
+    }
+
     pub fn runtime_snapshot(&self, has_locked_install: bool) -> PiRuntimeSnapshotDto {
         let guard = match self.active.lock() {
             Ok(g) => g,
@@ -370,11 +383,32 @@ impl PiRuntimeManager {
     }
 
     pub fn stop(&self) -> Result<(), String> {
-        // 退出路径也走这里，且用的是阻塞 lock（与 DshSlot 的 try_lock 不对称）。
-        // 若这条 lock 记录出现较大 wait_ms，就是退出被锁住的直接证据。
-        let mut guard = crate::diag::lock_wait("pi.runtime.active(stop)", &self.active)
+        let (instance_id, session) = {
+            let guard = crate::diag::lock_wait("pi.runtime.active(stop)", &self.active)
+                .map_err(|e| format!("runtime lock failed: {e}"))?;
+            match guard.as_ref() {
+                None => return Ok(()),
+                Some(active) => (active.instance_id, Arc::clone(&active.session)),
+            }
+        };
+        session
+            .stop()
+            .map_err(|e| format!("未能停止 Pi Session: {e}"))?;
+        let mut guard = crate::diag::lock_wait("pi.runtime.active(stop.clear)", &self.active)
             .map_err(|e| format!("runtime lock failed: {e}"))?;
-        if let Some(old) = guard.take() {
+        if guard.as_ref().map(|a| a.instance_id) == Some(instance_id) {
+            *guard = None;
+        }
+        Ok(())
+    }
+
+    /// 退出路径：拿不到锁就跳过，避免进程退不出。
+    pub fn try_stop(&self) -> Result<(), String> {
+        let old = match self.active.try_lock() {
+            Ok(mut guard) => guard.take(),
+            Err(_) => return Err("try_lock failed".into()),
+        };
+        if let Some(old) = old {
             let _ = old.session.stop();
         }
         Ok(())
@@ -545,10 +579,12 @@ impl PiRuntimeManager {
             if let Some(session) = session {
                 self.ensure_not_busy(session.as_ref())?;
             }
-            let mut guard = crate::diag::lock_wait("pi.runtime.active(restart)", &self.active)
-                .map_err(|e| PiOpenError::RpcFailed(format!("runtime lock failed: {e}")))?;
-            if let Some(old) = guard.take() {
-                // 注意：此处仍持有 active 锁并进入 inner 锁 + taskkill。
+            let old = {
+                let mut guard = crate::diag::lock_wait("pi.runtime.active(restart)", &self.active)
+                    .map_err(|e| PiOpenError::RpcFailed(format!("runtime lock failed: {e}")))?;
+                guard.take()
+            };
+            if let Some(old) = old {
                 let _span = crate::diag::span("shutdown", "restart_stop_old_session");
                 let _ = old.session.stop();
             }
@@ -741,6 +777,8 @@ pub struct FakePiController {
     pub streaming: AtomicBool,
     pub compacting: AtomicBool,
     pub fail_next_start: AtomicBool,
+    pub force_closed: AtomicBool,
+    pub fail_next_stop: AtomicBool,
     pub session_id: Mutex<String>,
     pub messages: Mutex<Vec<Value>>,
     block_get_state: AtomicBool,
@@ -759,6 +797,8 @@ impl FakePiController {
             streaming: AtomicBool::new(false),
             compacting: AtomicBool::new(false),
             fail_next_start: AtomicBool::new(false),
+            force_closed: AtomicBool::new(false),
+            fail_next_stop: AtomicBool::new(false),
             session_id: Mutex::new(String::new()),
             messages: Mutex::new(Vec::new()),
             block_get_state: AtomicBool::new(false),
@@ -901,11 +941,17 @@ impl PiProcess for FakePiProcess {
         true
     }
     fn stop(&self) -> std::io::Result<()> {
+        if self.ctrl.fail_next_stop.swap(false, Ordering::SeqCst) {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                "Pi process still alive after taskkill /T /F",
+            ));
+        }
         self.closed.store(true, Ordering::SeqCst);
         self.ctrl.stops.fetch_add(1, Ordering::SeqCst);
         Ok(())
     }
     fn is_closed(&self) -> bool {
-        self.closed.load(Ordering::SeqCst)
+        self.closed.load(Ordering::SeqCst) || self.ctrl.force_closed.load(Ordering::SeqCst)
     }
 }

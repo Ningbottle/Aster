@@ -1,5 +1,8 @@
+#![allow(clippy::unused_async)]
+
 use crate::pi::runtime::{
-    decide_activate_project, decide_remove_project, ActivateProjectDecision, PiRuntimeManager,
+    decide_activate_project, decide_remove_project, decide_set_pi_host_workdir,
+    ActivateProjectDecision, PiRuntimeManager,
 };
 use crate::platform::db;
 use serde::{Deserialize, Serialize};
@@ -14,8 +17,8 @@ pub struct RecentProjectDto {
 }
 
 #[tauri::command]
-pub fn project_choose(
-    runtime: tauri::State<PiRuntimeManager>,
+pub async fn project_choose(
+    runtime: tauri::State<'_, PiRuntimeManager>,
     path: String,
 ) -> Result<RecentProjectDto, String> {
     let clean = path.trim();
@@ -35,7 +38,7 @@ pub fn project_choose(
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| clean.to_string());
 
-    let binding = runtime.active_binding();
+    let binding = runtime.bound_binding();
     match decide_activate_project(binding.as_ref(), &p)? {
         ActivateProjectDecision::Noop => {
             return Ok(RecentProjectDto {
@@ -61,7 +64,7 @@ pub fn project_choose(
 }
 
 #[tauri::command]
-pub fn project_recent_list() -> Result<Vec<RecentProjectDto>, String> {
+pub async fn project_recent_list() -> Result<Vec<RecentProjectDto>, String> {
     let (_layout, conn) = crate::platform::open_layout_and_db()?;
     let active = db::get_active_project(&conn).unwrap_or(None);
     let records = db::list_recent_projects(&conn).map_err(|e| e.to_string())?;
@@ -81,14 +84,14 @@ pub fn project_recent_list() -> Result<Vec<RecentProjectDto>, String> {
 }
 
 #[tauri::command]
-pub fn project_get_active() -> Result<Option<String>, String> {
+pub async fn project_get_active() -> Result<Option<String>, String> {
     let (_layout, conn) = crate::platform::open_layout_and_db()?;
     db::get_active_project(&conn).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-pub fn project_set_active(
-    runtime: tauri::State<PiRuntimeManager>,
+pub async fn project_set_active(
+    runtime: tauri::State<'_, PiRuntimeManager>,
     path: String,
 ) -> Result<(), String> {
     let clean = path.trim();
@@ -96,7 +99,7 @@ pub fn project_set_active(
     if !p.is_dir() {
         return Err(format!("目录不存在或不是文件夹: {}", p.display()));
     }
-    let binding = runtime.active_binding();
+    let binding = runtime.bound_binding();
     match decide_activate_project(binding.as_ref(), &p)? {
         ActivateProjectDecision::Noop => return Ok(()),
         ActivateProjectDecision::Proceed => {}
@@ -113,9 +116,9 @@ pub fn project_set_active(
 }
 
 #[tauri::command]
-pub fn project_remove(runtime: tauri::State<PiRuntimeManager>, path: String) -> Result<(), String> {
+pub async fn project_remove(runtime: tauri::State<'_, PiRuntimeManager>, path: String) -> Result<(), String> {
     let p = PathBuf::from(path.trim());
-    decide_remove_project(runtime.active_binding().as_ref(), &p)?;
+    decide_remove_project(runtime.bound_binding().as_ref(), &p)?;
     let (_layout, conn) = crate::platform::open_layout_and_db()?;
     db::remove_recent_project(&conn, path.trim()).map_err(|e| e.to_string())?;
     if let Ok(Some(active)) = db::get_active_project(&conn) {
@@ -135,8 +138,15 @@ pub fn project_pick_directory() -> Result<Option<String>, String> {
 }
 
 #[tauri::command]
-pub fn host_workdir_set(host: String, path: String) -> Result<(), String> {
+pub async fn host_workdir_set(
+    runtime: tauri::State<'_, PiRuntimeManager>,
+    host: String,
+    path: String,
+) -> Result<(), String> {
     let clean_path = path.trim();
+    if host == "pi" {
+        decide_set_pi_host_workdir(runtime.bound_binding().as_ref())?;
+    }
     if !clean_path.is_empty() {
         let p = PathBuf::from(clean_path);
         if !p.is_dir() {
@@ -148,7 +158,7 @@ pub fn host_workdir_set(host: String, path: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn host_workdir_get(host: String) -> Result<Option<String>, String> {
+pub async fn host_workdir_get(host: String) -> Result<Option<String>, String> {
     let (_layout, conn) = crate::platform::open_layout_and_db()?;
     db::get_host_workdir(&conn, &host).map_err(|e| e.to_string())
 }

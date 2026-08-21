@@ -151,22 +151,19 @@ pub fn install_managed(app_data_root: &Path, version: &str) -> Result<PiRuntime,
 }
 
 fn probe_external_version(shim: &Path) -> Option<String> {
-    let out = Command::new("cmd")
-        .args(["/C", &shim.to_string_lossy(), "--version"])
-        .stdin(Stdio::null())
-        .output()
-        .ok()?;
-    let first_line = String::from_utf8_lossy(&out.stdout)
-        .lines()
-        .next()
-        .unwrap_or("")
-        .trim()
-        .to_string();
-    if crate::supervisor::is_safe_version(&first_line) {
-        Some(first_line)
-    } else {
-        None
-    }
+    // 只读 package.json。不要 `pi.cmd --version`：那会拉起 cmd/node，
+    // 若从同步 Tauri command（`pi_runtime_snapshot`）调用，会堵住 Win32
+    // 消息泵数秒，打开会话后标题栏关闭/最小化/最大化像没反应。
+    let pkg = shim
+        .parent()?
+        .join("node_modules")
+        .join("@earendil-works")
+        .join("pi-coding-agent")
+        .join("package.json");
+    let raw = std::fs::read_to_string(pkg).ok()?;
+    let v: Value = serde_json::from_str(&raw).ok()?;
+    let version = v.get("version")?.as_str()?.trim().to_string();
+    crate::supervisor::is_safe_version(&version).then_some(version)
 }
 
 /// 解析后的服务端行。
@@ -356,9 +353,8 @@ impl PiSession {
         cmd.stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null());
-        let mut child = cmd.spawn()?;
+        let mut child = crate::supervisor::spawn_logged(&mut cmd, "pi")?;
         let child_pid = child.id();
-        crate::diag::proc_event("spawn", "pi", child_pid);
 
         let stdin = child.stdin.take().expect("piped stdin");
         let stdout = child.stdout.take().expect("piped stdout");
@@ -592,11 +588,55 @@ impl PiSession {
         self.watcher().wait_settled(timeout)
     }
 
-    /// 停止会话进程树。
+    /// 停止会话进程树。UI 路径不额外轮询；退出路径用短预算。
+    ///
+    /// `ASTER_PI_STOP_WAIT_MS` 只用于故障注入观察（生产不设置）：
+    /// - `=0`：跳过 taskkill，直接返回与超时一致的 `TimedOut`（模拟
+    ///   “taskkill 之后进程仍在”这一超时前置条件），其余错误传播链路
+    ///   （`PiRuntimeManager::stop` -> `未能停止 Pi Session` -> UI）完全真实。
+    /// - `>0`：把 `wait_for_child_exit` 预算压到该毫秒数。
+    /// 未设置时保持默认 800ms。
     pub fn stop(&mut self) -> std::io::Result<()> {
+        let budget = std::env::var("ASTER_PI_STOP_WAIT_MS")
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok())
+            .map(Duration::from_millis)
+            .unwrap_or(Duration::from_millis(800));
+        if budget.is_zero() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                "Pi process still alive after taskkill /T /F (ASTER_PI_STOP_WAIT_MS=0 injection)",
+            ));
+        }
+        self.stop_with_budget(budget)
+    }
+
+    pub fn stop_with_budget(&mut self, wait: Duration) -> std::io::Result<()> {
         let pid = self.child.id();
         crate::diag::proc_event("stop_requested", "pi", pid);
-        crate::supervisor::kill_process_tree(pid)
+        crate::supervisor::kill_process_tree(pid)?;
+        wait_for_child_exit(&mut self.child, pid, wait)
+    }
+}
+
+/// taskkill 返回不代表进程已消失；超时如实报错，不把“已发 taskkill”伪装成“已停止”。
+fn wait_for_child_exit(child: &mut Child, pid: u32, wait: Duration) -> std::io::Result<()> {
+    let deadline = Instant::now() + wait;
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => {
+                crate::diag::proc_event("exited", "pi", pid);
+                return Ok(());
+            }
+            Ok(None) if Instant::now() >= deadline => {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    "Pi process still alive after taskkill /T /F",
+                ));
+            }
+            Ok(None) => std::thread::sleep(Duration::from_millis(20)),
+            Err(e) => return Err(e),
+        }
     }
 }
 
@@ -789,5 +829,64 @@ mod tests {
         // U+2028/U+2029 是合法 JSON 字符串内容，不得被当作分隔符处理出错
         let line = "{\"type\":\"x\",\"v\":\"a\u{2028}b\"}";
         assert!(parse_server_line(line).is_some());
+    }
+
+    #[test]
+    fn discover_reads_external_version_without_running_shim() {
+        // 同步 IPC 里执行 `pi.cmd --version` 会堵住 Win32 消息泵，打开会话后
+        // 标题栏关闭/最小化看起来像死掉。发现路径必须只读文件。
+        let tmp = tempfile::tempdir().unwrap();
+        let appdata = tmp.path().join("appdata");
+        let npm = appdata.join("npm");
+        let pkg_dir = npm
+            .join("node_modules")
+            .join("@earendil-works")
+            .join("pi-coding-agent");
+        std::fs::create_dir_all(pkg_dir.join("dist")).unwrap();
+        std::fs::write(
+            pkg_dir.join("package.json"),
+            r#"{"name":"pi-coding-agent","version":"0.84.2"}"#,
+        )
+        .unwrap();
+        std::fs::write(pkg_dir.join("dist").join("cli.js"), "true").unwrap();
+        std::fs::write(
+            npm.join("pi.cmd"),
+            "@echo off\r\necho shim-ran> \"%~dp0ran.txt\"\r\necho 0.84.2\r\n",
+        )
+        .unwrap();
+
+        let old = std::env::var_os("APPDATA");
+        std::env::set_var("APPDATA", &appdata);
+        let found = discover(&tmp.path().join("aster-root"));
+        match old {
+            Some(v) => std::env::set_var("APPDATA", v),
+            None => std::env::remove_var("APPDATA"),
+        }
+
+        assert!(
+            !npm.join("ran.txt").exists(),
+            "discover must not execute npm\\pi.cmd"
+        );
+        assert!(
+            found.iter().any(|r| r.version == "0.84.2" && !r.managed),
+            "expected external 0.84.2, got {found:?}"
+        );
+    }
+
+    #[test]
+    fn wait_for_child_exit_times_out_while_process_still_alive() {
+        let mut child = Command::new("cmd")
+            .args(["/C", "ping", "-n", "20", "127.0.0.1"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        let pid = child.id();
+        let err = wait_for_child_exit(&mut child, pid, Duration::from_millis(0))
+            .expect_err("live child must time out");
+        assert_eq!(err.kind(), std::io::ErrorKind::TimedOut);
+        let _ = child.kill();
+        let _ = child.wait();
     }
 }

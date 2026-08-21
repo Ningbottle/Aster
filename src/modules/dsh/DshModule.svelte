@@ -1,9 +1,14 @@
 <script lang="ts">
-  import type { DshRuntime, DshStatus } from "../../types";
+  import type { DshRuntime } from "../../types";
+  import {
+    dshLifecycleLabel,
+    hostRuntimeStore,
+    setDshRuntimeFacts,
+    type DshPending,
+  } from "../../platform/runtimeStatus";
   import { dshApi } from "./api";
 
   export let dshRuntimes: DshRuntime[] = [];
-  export let dshStatus: DshStatus | null = null;
   export let onRefresh: () => Promise<void>;
 
   let starting = false;
@@ -13,22 +18,12 @@
   let errorMsg = "";
   let iframeKey = 0;
 
+  $: facts = $hostRuntimeStore.dsh;
   $: hasDsh = dshRuntimes.some((r) => r.version === "0.1.0-rc.6");
-  $: targetUrl = dshStatus?.url || "http://127.0.0.1:38472";
-  $: isRunning = !!dshStatus?.running;
-  $: dshLifecycle = starting
-    ? "Starting"
-    : stopping
-      ? "Stopping"
-      : dshStatus?.lifecycle === "ready"
-        ? "Ready"
-        : dshStatus?.lifecycle === "crashed"
-          ? "Crashed"
-          : dshStatus?.lifecycle === "unknown"
-            ? "Unknown"
-            : hasDsh
-              ? "Closed"
-              : "Needs setup";
+  $: targetUrl = facts?.url || "http://127.0.0.1:38472";
+  $: isRunning = !!facts?.running;
+  $: dshPending = (starting ? "starting" : stopping ? "stopping" : null) as DshPending;
+  $: dshLifecycle = dshLifecycleLabel(facts, dshPending);
 
   export async function installManagedDsh() {
     installingDsh = true;
@@ -50,7 +45,8 @@
     starting = true;
     errorMsg = "";
     try {
-      dshStatus = await dshApi.start(38472);
+      const next = await dshApi.start(38472);
+      setDshRuntimeFacts(next);
       await onRefresh();
     } catch (e) {
       errorMsg = `启动 DSH 失败: ${e}`;
@@ -64,7 +60,7 @@
     stopping = true;
     try {
       await dshApi.stop();
-      dshStatus = null;
+      setDshRuntimeFacts(null);
       await onRefresh();
     } catch (e) {
       errorMsg = `停止服务失败: ${e}`;
@@ -94,12 +90,12 @@
       {#if isRunning}
         <span class="tag ok">
           <span class="status-dot run"></span>
-          运行中 · {dshStatus?.url}{dshStatus?.pid ? ` (PID: ${dshStatus.pid})` : ""}
+          运行中 · {facts?.url}{facts?.pid ? ` (PID: ${facts.pid})` : ""}
         </span>
-        <span class="tag neutral sm">原生 Web UI ({dshStatus?.version})</span>
-        {#if dshStatus?.healthy}
+        <span class="tag neutral sm">原生 Web UI ({facts?.version})</span>
+        {#if facts?.healthy}
           <span class="tag ok sm">健康（boot manifest 已注入）</span>
-        {:else if dshStatus?.static_ok}
+        {:else if facts?.static_ok}
           <span class="tag neutral sm">静态可达，boot 注入未验证</span>
         {:else}
           <span class="tag neutral sm">进程存活，HTTP 未就绪</span>

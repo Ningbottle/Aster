@@ -1,6 +1,10 @@
 //! Typed Pi project/session Tauri commands. DTOs never include native session files.
+#![allow(clippy::unused_async)] // blocking bodies; async only to leave the Win32 UI thread
 
 use crate::db::{self, PiSessionIndexRecord};
+use crate::ipc::diag;
+use crate::pi::connector::{self as pi_connector, PiRuntime, SessionEvent};
+use crate::pi::locked_runtime;
 use crate::pi_runtime::{
     PiActiveSnapshot, PiEventEnvelope, PiEventSink, PiOpenError, PiRuntimeManager,
     PiRuntimeSnapshotDto,
@@ -9,15 +13,13 @@ use crate::pi_sessions::{
     default_session_root, normalize_project_path, project_paths_equal, relative_locator,
     resolve_session_path, scan_session_root, PiSessionCatalogEntry,
 };
-use crate::ipc::diag;
-use crate::pi::connector::{self as pi_connector, PiRuntime, SessionEvent};
-use crate::pi::locked_runtime;
 use crate::platform::{app_data, open_layout_and_db};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 use tauri::{Emitter, State};
 
 pub const PERMISSION_SUMMARY: &str = "windows_user";
@@ -107,8 +109,8 @@ pub struct PiSessionIndexRemoveArgs {
 pub type PiEventEnvelopeDto = PiEventEnvelope;
 
 #[tauri::command]
-pub fn pi_project_tree_refresh(
-    state: State<PiRuntimeManager>,
+pub async fn pi_project_tree_refresh(
+    state: State<'_, PiRuntimeManager>,
 ) -> Result<Vec<PiProjectNodeDto>, String> {
     let (_layout, conn) = open_layout_and_db()?;
     let root = default_session_root().map_err(|e| e.to_string())?;
@@ -151,9 +153,9 @@ pub fn pi_project_tree_refresh(
 }
 
 #[tauri::command]
-pub fn pi_session_create(
+pub async fn pi_session_create(
     app: tauri::AppHandle,
-    state: State<PiRuntimeManager>,
+    state: State<'_, PiRuntimeManager>,
     project_path: String,
 ) -> Result<PiActiveSessionDto, String> {
     let runtime = locked_runtime()?;
@@ -166,9 +168,9 @@ pub fn pi_session_create(
 }
 
 #[tauri::command]
-pub fn pi_session_open(
+pub async fn pi_session_open(
     app: tauri::AppHandle,
-    state: State<PiRuntimeManager>,
+    state: State<'_, PiRuntimeManager>,
     project_path: String,
     session_id: String,
 ) -> Result<PiActiveSessionDto, String> {
@@ -209,13 +211,15 @@ pub fn pi_session_open(
 }
 
 #[tauri::command]
-pub fn pi_session_snapshot(state: State<PiRuntimeManager>) -> Result<PiActiveSessionDto, String> {
+pub async fn pi_session_snapshot(
+    state: State<'_, PiRuntimeManager>,
+) -> Result<PiActiveSessionDto, String> {
     dto_from_snapshot(&state.snapshot()?)
 }
 
 #[tauri::command]
-pub fn pi_session_set_name(
-    state: State<PiRuntimeManager>,
+pub async fn pi_session_set_name(
+    state: State<'_, PiRuntimeManager>,
     name: String,
 ) -> Result<PiActiveSessionDto, String> {
     let snap = state.set_session_name(&name)?;
@@ -224,8 +228,8 @@ pub fn pi_session_set_name(
 }
 
 #[tauri::command]
-pub fn pi_session_set_model(
-    state: State<PiRuntimeManager>,
+pub async fn pi_session_set_model(
+    state: State<'_, PiRuntimeManager>,
     provider: String,
     model_id: String,
 ) -> Result<PiActiveSessionDto, String> {
@@ -233,37 +237,44 @@ pub fn pi_session_set_model(
 }
 
 #[tauri::command]
-pub fn pi_session_set_thinking_level(
-    state: State<PiRuntimeManager>,
+pub async fn pi_session_set_thinking_level(
+    state: State<'_, PiRuntimeManager>,
     level: String,
 ) -> Result<PiActiveSessionDto, String> {
     dto_from_snapshot(&state.set_thinking_level(&level)?)
 }
 
 #[tauri::command]
-pub fn pi_session_prompt(state: State<PiRuntimeManager>, message: String) -> Result<(), String> {
+pub async fn pi_session_prompt(
+    state: State<'_, PiRuntimeManager>,
+    message: String,
+) -> Result<(), String> {
     state.prompt(&message)
 }
 
 #[tauri::command]
-pub fn pi_session_abort(state: State<PiRuntimeManager>) -> Result<PiActiveSessionDto, String> {
+pub async fn pi_session_abort(
+    state: State<'_, PiRuntimeManager>,
+) -> Result<PiActiveSessionDto, String> {
     dto_from_snapshot(&state.abort()?)
 }
 
 #[tauri::command]
-pub fn pi_session_stop(state: State<PiRuntimeManager>) -> Result<(), String> {
+pub async fn pi_session_stop(state: State<'_, PiRuntimeManager>) -> Result<(), String> {
     state.stop()
 }
 
 #[tauri::command]
-pub fn pi_runtime_snapshot(state: State<PiRuntimeManager>) -> Result<PiRuntimeSnapshotDto, String> {
+pub async fn pi_runtime_snapshot(
+    state: State<'_, PiRuntimeManager>,
+) -> Result<PiRuntimeSnapshotDto, String> {
     let has_locked_install = locked_runtime().is_ok();
     Ok(state.runtime_snapshot(has_locked_install))
 }
 
 #[tauri::command]
-pub fn pi_session_index_remove(
-    state: State<PiRuntimeManager>,
+pub async fn pi_session_index_remove(
+    state: State<'_, PiRuntimeManager>,
     session_id: String,
 ) -> Result<Vec<PiProjectNodeDto>, String> {
     let (_layout, conn) = open_layout_and_db()?;
@@ -437,7 +448,7 @@ fn display_name_for(path: &str) -> String {
 }
 
 #[tauri::command]
-pub fn pi_discover() -> Result<Vec<PiRuntime>, String> {
+pub async fn pi_discover() -> Result<Vec<PiRuntime>, String> {
     let root = app_data::AppDataLayout::default_root().map_err(|e| e.to_string())?;
     let runtimes = pi_connector::discover(&root);
     if let Ok((_layout, conn)) = crate::platform::open_layout_and_db() {
@@ -454,7 +465,7 @@ pub fn pi_discover() -> Result<Vec<PiRuntime>, String> {
 }
 
 #[tauri::command]
-pub fn pi_install_managed(version: Option<String>) -> Result<PiRuntime, String> {
+pub async fn pi_install_managed(version: Option<String>) -> Result<PiRuntime, String> {
     let ver = version
         .as_deref()
         .unwrap_or(pi_connector::LOCKED_PI_VERSION);
@@ -465,19 +476,106 @@ pub fn pi_install_managed(version: Option<String>) -> Result<PiRuntime, String> 
     }
     Ok(runtime)
 }
+const DELTA_FLUSH: Duration = Duration::from_millis(16);
+
+struct PendingDelta {
+    instance_id: u64,
+    session_id: Option<String>,
+    event: SessionEvent,
+}
+
+fn is_text_delta(event: &SessionEvent) -> bool {
+    event.event_type == "message_update"
+        && event
+            .raw
+            .get("assistantMessageEvent")
+            .and_then(|e| e.get("type"))
+            .and_then(|t| t.as_str())
+            == Some("text_delta")
+}
+
+fn merge_text_delta(dst: &mut SessionEvent, src: SessionEvent) {
+    let extra = src
+        .raw
+        .get("assistantMessageEvent")
+        .and_then(|e| e.get("delta"))
+        .and_then(|d| d.as_str())
+        .unwrap_or("")
+        .to_string();
+    if let Some(delta) = dst
+        .raw
+        .get_mut("assistantMessageEvent")
+        .and_then(|e| e.as_object_mut())
+        .and_then(|e| e.get_mut("delta"))
+    {
+        if let Some(existing) = delta.as_str() {
+            *delta = Value::String(format!("{existing}{extra}"));
+        }
+    }
+    dst.summary = src.summary;
+}
+
+fn emit_pi_event(
+    app: &tauri::AppHandle,
+    instance_id: u64,
+    session_id: Option<String>,
+    event: SessionEvent,
+) {
+    diag::emit_tick();
+    let _ = app.emit(
+        "pi-event",
+        PiEventEnvelope {
+            runtime_instance_id: instance_id,
+            session_id,
+            event_type: event.event_type,
+            summary: event.summary,
+            raw: event.raw,
+        },
+    );
+}
+
 pub(crate) fn pi_event_sink(app: tauri::AppHandle) -> PiEventSink {
+    let pending: Arc<Mutex<Option<PendingDelta>>> = Arc::new(Mutex::new(None));
+    let last_flush = Arc::new(Mutex::new(Instant::now() - DELTA_FLUSH));
     Arc::new(move |instance_id, session_id, event: SessionEvent| {
-        diag::emit_tick();
-        let _ = app.emit(
-            "pi-event",
-            PiEventEnvelope {
-                runtime_instance_id: instance_id,
-                session_id,
-                event_type: event.event_type,
-                summary: event.summary,
-                raw: event.raw,
-            },
-        );
+        if is_text_delta(&event) {
+            let mut slot = match pending.lock() {
+                Ok(g) => g,
+                Err(_) => return,
+            };
+            if let Some(p) = slot.as_mut() {
+                merge_text_delta(&mut p.event, event);
+            } else {
+                *slot = Some(PendingDelta {
+                    instance_id,
+                    session_id,
+                    event,
+                });
+            }
+            let due = last_flush
+                .lock()
+                .map(|t| t.elapsed() >= DELTA_FLUSH)
+                .unwrap_or(true);
+            if due {
+                if let Some(p) = slot.take() {
+                    if let Ok(mut t) = last_flush.lock() {
+                        *t = Instant::now();
+                    }
+                    drop(slot);
+                    emit_pi_event(&app, p.instance_id, p.session_id, p.event);
+                }
+            }
+            return;
+        }
+        if let Ok(mut slot) = pending.lock() {
+            if let Some(p) = slot.take() {
+                emit_pi_event(&app, p.instance_id, p.session_id, p.event);
+                if let Ok(mut t) = last_flush.lock() {
+                    *t = Instant::now();
+                }
+            }
+        }
+        emit_pi_event(&app, instance_id, session_id, event);
     })
 }
 
@@ -487,15 +585,15 @@ pub fn pi_session_status(state: tauri::State<PiRuntimeManager>) -> Result<bool, 
 }
 
 #[tauri::command]
-pub fn pi_get_available_models(
-    state: tauri::State<PiRuntimeManager>,
+pub async fn pi_get_available_models(
+    state: tauri::State<'_, PiRuntimeManager>,
 ) -> Result<Vec<serde_json::Value>, String> {
     state.get_available_models()
 }
 
 #[tauri::command]
-pub fn pi_set_model(
-    state: tauri::State<PiRuntimeManager>,
+pub async fn pi_set_model(
+    state: tauri::State<'_, PiRuntimeManager>,
     provider: String,
     model_id: String,
 ) -> Result<serde_json::Value, String> {
@@ -504,7 +602,9 @@ pub fn pi_set_model(
 }
 
 #[tauri::command]
-pub fn pi_get_state(state: tauri::State<PiRuntimeManager>) -> Result<serde_json::Value, String> {
+pub async fn pi_get_state(
+    state: tauri::State<'_, PiRuntimeManager>,
+) -> Result<serde_json::Value, String> {
     state.get_state()
 }
 
@@ -513,4 +613,31 @@ pub fn pi_session_observation(
     state: tauri::State<PiRuntimeManager>,
 ) -> Result<serde_json::Value, String> {
     state.observation_json()
+}
+
+#[cfg(test)]
+mod delta_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn delta_event(text: &str) -> SessionEvent {
+        SessionEvent {
+            event_type: "message_update".into(),
+            summary: format!("text: {text}"),
+            raw: json!({
+                "assistantMessageEvent": { "type": "text_delta", "delta": text }
+            }),
+        }
+    }
+
+    #[test]
+    fn merge_text_delta_concatenates() {
+        let mut a = delta_event("hel");
+        merge_text_delta(&mut a, delta_event("lo"));
+        assert_eq!(
+            a.raw["assistantMessageEvent"]["delta"].as_str(),
+            Some("hello")
+        );
+        assert!(is_text_delta(&a));
+    }
 }

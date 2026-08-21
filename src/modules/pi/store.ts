@@ -7,7 +7,9 @@ import type {
   PiProjectNode,
   PiRuntimeSnapshot,
 } from "../../types";
+import { invoke } from "../../platform/ipc";
 import { piApi } from "./api";
+import { setPiRuntimeFacts, getHostRuntimeFacts, piProjectBlocksChange } from "../../platform/runtimeStatus";
 import {
   isIgnorableResyncError,
   messagesFromNative,
@@ -37,6 +39,7 @@ export type PiConsoleState = {
   availableModels: PiModel[];
   modelsError: string | null;
   busyOffer: { projectPath: string; sessionId: string } | null;
+  projectBlockOffer: { nextPath: string; message: string } | null;
   runtime: PiRuntimeSnapshot | null;
 };
 
@@ -51,6 +54,7 @@ const initial: PiConsoleState = {
   availableModels: [],
   modelsError: null,
   busyOffer: null,
+  projectBlockOffer: null,
   runtime: null,
 };
 
@@ -70,6 +74,7 @@ function applySnapshot(current: PiConsoleState, active: PiActiveSession): PiCons
     sessionStatus: statusFromActive(active),
     error: null,
     busyOffer: null,
+    projectBlockOffer: null,
   };
 }
 
@@ -88,7 +93,11 @@ function createStore() {
   let settleDirty = false;
 
   async function refreshTree(): Promise<void> {
-    update((s) => ({ ...s, treeStatus: "loading", error: s.treeStatus === "error" ? s.error : null }));
+    update((s) => ({
+      ...s,
+      treeStatus: s.tree.length > 0 ? s.treeStatus : "loading",
+      error: s.treeStatus === "error" ? s.error : null,
+    }));
     try {
       const tree = await piApi.refreshTree();
       update((s) => ({ ...s, tree, treeStatus: "ready" }));
@@ -100,17 +109,20 @@ function createStore() {
   async function refreshRuntime(): Promise<void> {
     try {
       const runtime = await piApi.runtimeSnapshot();
+      setPiRuntimeFacts(runtime);
       update((s) => ({ ...s, runtime }));
     } catch (err) {
+      const unknown = {
+        lifecycle: "unknown",
+        hasLockedInstall: false,
+        projectPath: null,
+        sessionId: null,
+        runtimeInstanceId: null,
+      };
+      setPiRuntimeFacts(unknown);
       update((s) => ({
         ...s,
-        runtime: {
-          lifecycle: "unknown",
-          hasLockedInstall: false,
-          projectPath: null,
-          sessionId: null,
-          runtimeInstanceId: null,
-        },
+        runtime: unknown,
         error: s.error ?? toError(err),
       }));
     }
@@ -134,13 +146,11 @@ function createStore() {
   }
 
   async function createSession(projectPath: string): Promise<void> {
-    update((s) => ({ ...s, sessionStatus: "starting", error: null, busyOffer: null }));
+    update((s) => ({ ...s, sessionStatus: "starting", error: null, busyOffer: null, projectBlockOffer: null }));
     try {
       const active = await piApi.createSession(projectPath);
       update((s) => applySnapshot(s, active));
-      await refreshTree();
-      await loadModels();
-      await refreshRuntime();
+      await Promise.all([refreshTree(), loadModels(), refreshRuntime()]);
     } catch (err) {
       const message = toError(err);
       if (message === "busy") {
@@ -158,13 +168,11 @@ function createStore() {
   }
 
   async function openSession(projectPath: string, sessionId: string): Promise<void> {
-    update((s) => ({ ...s, sessionStatus: "starting", error: null, busyOffer: null }));
+    update((s) => ({ ...s, sessionStatus: "starting", error: null, busyOffer: null, projectBlockOffer: null }));
     try {
       const active = await piApi.openSession(projectPath, sessionId);
       update((s) => applySnapshot(s, active));
-      await refreshTree();
-      await loadModels();
-      await refreshRuntime();
+      await Promise.all([refreshTree(), loadModels(), refreshRuntime()]);
     } catch (err) {
       const message = toError(err);
       if (message === "busy") {
@@ -323,6 +331,39 @@ function createStore() {
     update((s) => ({ ...s, error: toError(err) }));
   }
 
+  function isProjectGuardMessage(message: string): boolean {
+    return message.includes("活动 Pi Session");
+  }
+
+  function offerProjectBlock(nextPath: string, message: string): void {
+    update((s) => ({ ...s, projectBlockOffer: { nextPath, message }, error: null }));
+  }
+
+  function reportProjectChooseError(err: unknown, nextPath: string): void {
+    const message = toError(err);
+    if (isProjectGuardMessage(message)) {
+      offerProjectBlock(nextPath, message);
+      return;
+    }
+    reportError(err);
+  }
+
+  function dismissProjectBlock(): void {
+    update((s) => ({ ...s, projectBlockOffer: null }));
+  }
+
+  async function stopThenChoose(nextPath: string): Promise<void> {
+    try {
+      await stop();
+      await invoke("project_choose", { path: nextPath });
+      update((s) => ({ ...s, projectBlockOffer: null, error: null }));
+      await refreshTree();
+      await refreshRuntime();
+    } catch (err) {
+      reportProjectChooseError(err, nextPath);
+    }
+  }
+
   async function stop(): Promise<void> {
     try {
       await piApi.stop();
@@ -415,6 +456,10 @@ function createStore() {
     stop,
     acceptEvent,
     dismissBusy,
+    offerProjectBlock,
+    dismissProjectBlock,
+    stopThenChoose,
+    reportProjectChooseError,
     loadModels,
     refreshRuntime,
     snapshot,
@@ -439,3 +484,15 @@ function sameBinding(current: BindingKey | null, captured: BindingKey): boolean 
 }
 
 export const piConsoleStore = createStore();
+
+if (import.meta.env.DEV) {
+  (
+    globalThis as typeof globalThis & {
+      __asterDebug?: {
+        piConsoleStore: typeof piConsoleStore;
+        getHostRuntimeFacts: typeof getHostRuntimeFacts;
+        piProjectBlocksChange: typeof piProjectBlocksChange;
+      };
+    }
+  ).__asterDebug = { piConsoleStore, getHostRuntimeFacts, piProjectBlocksChange };
+}

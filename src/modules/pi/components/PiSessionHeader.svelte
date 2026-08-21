@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { hostRuntimeStore, piLifecycleLabel } from "../../../platform/runtimeStatus";
   import { piConsoleStore } from "../store";
 
   const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
@@ -9,24 +10,10 @@
   $: active = $piConsoleStore.active;
   $: models = $piConsoleStore.availableModels;
   $: busy = !!(active && (active.isStreaming || active.isCompacting));
-  $: statusLabel = statusText(
+  $: statusLabel = piLifecycleLabel(
     $piConsoleStore.sessionStatus,
-    $piConsoleStore.runtime?.lifecycle ?? null,
+    $hostRuntimeStore.pi?.lifecycle ?? $piConsoleStore.runtime?.lifecycle ?? null,
   );
-
-  function statusText(status: string, lifecycle: string | null): string {
-    if (status === "starting" || lifecycle === "starting") return "Starting";
-    if (status === "streaming" || lifecycle === "busy") return "Running";
-    if (status === "compacting") return "Compacting";
-    if (status === "error") return "Error";
-    if (lifecycle === "crashed") return "Error";
-    if (lifecycle === "stopping") return "Stopping";
-    if (lifecycle === "needsSetup") return "Needs setup";
-    if (status === "idle" || lifecycle === "ready") return "Ready";
-    if (lifecycle === "unknown") return "Unknown";
-    if (status === "closed" || lifecycle === "closed") return "Ready";
-    return "Unknown";
-  }
 
   async function onModelChange(e: Event) {
     const id = (e.target as HTMLSelectElement).value;

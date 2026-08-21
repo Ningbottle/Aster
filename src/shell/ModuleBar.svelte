@@ -5,6 +5,10 @@
   import PiProjectTree from "../modules/pi/components/PiProjectTree.svelte";
   import { piConsoleStore } from "../modules/pi/store";
   import {
+    getHostRuntimeFacts,
+    piProjectBlocksChange,
+  } from "../platform/runtimeStatus";
+  import {
     clampSidebarWidth,
     isEditableTarget,
     loadPiSidebarHidden,
@@ -119,15 +123,23 @@
   }
 
   async function openProjectPicker() {
+    let next = "";
     try {
       const picked = await invoke<string | null>("project_pick_directory");
-      if (picked && picked.trim()) {
-        await invoke("project_choose", { path: picked.trim() });
-        await piConsoleStore.refreshTree();
-        await onProjectChange?.();
+      if (!picked?.trim()) return;
+      next = picked.trim();
+      await piConsoleStore.refreshRuntime();
+      const blocked = piProjectBlocksChange(getHostRuntimeFacts(), next);
+      if (blocked) {
+        piConsoleStore.offerProjectBlock(next, blocked);
+        return;
       }
+      await invoke("project_choose", { path: next });
+      await piConsoleStore.refreshTree();
+      await piConsoleStore.refreshRuntime();
+      await onProjectChange?.();
     } catch (err) {
-      piConsoleStore.reportError(err);
+      piConsoleStore.reportProjectChooseError(err, next);
     }
   }
 </script>
