@@ -3,5 +3,11 @@
   "identifier": "default",
   "description": "主窗口默认能力：仅允许应用自身命令与核心事件",
   "windows": ["main"],
-  "permissions": ["core:default"]
+  "permissions": [
+    "core:default",
+    "core:window:allow-minimize",
+    "core:window:allow-toggle-maximize",
+    "core:window:allow-close",
+    "core:window:allow-start-dragging"
+  ]
 }
