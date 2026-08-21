@@ -17,13 +17,19 @@
 //! - 停止时等待进程回收（超时如实报错），退出清理由 lib.rs 生命周期钩子兜底。
 
 use serde::Serialize;
-use std::io::{self, Read};
+use std::fs::OpenOptions;
+use std::io::{self, Read, Write};
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
+
+/// 正常 UI 停止等待子进程回收的上限。
+pub const DSH_STOP_WAIT: Duration = Duration::from_secs(5);
+/// 退出路径短预算：窗口已消失后不应再空等数秒。
+pub const DSH_EXIT_STOP_WAIT: Duration = Duration::from_millis(800);
 
 /// M2 锁定的 DSH 首发支持版本（来自 2026-08-13 发布的完整 web-app bundle）。
 pub const LOCKED_DSH_VERSION: &str = "0.1.0-rc.6";
@@ -234,6 +240,37 @@ impl HealthLayers {
     }
 }
 
+fn probe_url(url: &str, runner_alive: bool) -> HealthLayers {
+    let mut layers = HealthLayers {
+        runner_alive,
+        static_ok: false,
+        boot_ok: false,
+    };
+    if !layers.runner_alive {
+        return layers;
+    }
+    let agent = ureq::AgentBuilder::new()
+        .timeout_connect(Duration::from_millis(500))
+        .timeout_read(Duration::from_millis(1000))
+        .build();
+    let resp = match agent.get(url).call() {
+        Ok(resp) => resp,
+        Err(_) => return layers,
+    };
+    if resp.status() != 200 {
+        return layers;
+    }
+    let mut body = String::new();
+    let reader = resp.into_reader();
+    let mut limited = reader.take(65536);
+    if limited.read_to_string(&mut body).is_err() {
+        return layers;
+    }
+    layers.static_ok = body.contains(HEALTH_MARKER_TITLE) && body.contains(HEALTH_MARKER_ROOT);
+    layers.boot_ok = body.contains(HEALTH_MARKER_BOOT);
+    layers
+}
+
 /// DSH 运行状态视图。
 #[derive(Debug, Clone, Serialize)]
 pub struct DshStatus {
@@ -256,6 +293,44 @@ pub struct DshStatus {
     pub lifecycle: String,
 }
 
+/// 健康检查句柄：只持有 Arc，可在 DshSlot 锁外 wait_ready。
+pub struct DshReadiness {
+    url: String,
+    child: Arc<Mutex<Child>>,
+    stopped: Arc<AtomicBool>,
+}
+
+impl DshReadiness {
+    fn child_exited(&self) -> bool {
+        self.child
+            .lock()
+            .map(|mut c| c.try_wait().map(|s| s.is_some()).unwrap_or(true))
+            .unwrap_or(true)
+    }
+
+    fn is_stopped(&self) -> bool {
+        self.stopped.load(Ordering::SeqCst)
+    }
+
+    pub fn probe(&self) -> HealthLayers {
+        probe_url(&self.url, !self.is_stopped() && !self.child_exited())
+    }
+
+    pub fn wait_ready(&self, timeout: Duration) -> bool {
+        let deadline = Instant::now() + timeout;
+        while Instant::now() < deadline {
+            if self.probe().healthy() {
+                return true;
+            }
+            if self.child_exited() {
+                return false;
+            }
+            std::thread::sleep(Duration::from_millis(150));
+        }
+        false
+    }
+}
+
 /// 一个活跃的 DSH Web 服务实例。
 pub struct DshServer {
     child: Arc<Mutex<Child>>,
@@ -267,20 +342,9 @@ pub struct DshServer {
 }
 
 impl DshServer {
-    /// 通过官方 CLI 启动 DSH Web 服务进程，并等待健康探针三层全部就绪。
-    ///
-    /// 命令形态与官方 `npx @deepseek-ai/dsh web` 一致（web 是 --profile web
-    /// 的别名；profile 缺失时 CLI 在 $DSH_HOME 下自愈创建）：
-    /// `node <@deepseek-ai/dsh/lib/bin.js> web --host <host> --port <port>
-    ///   --trusted-host <host:port>`
-    ///
-    /// 环境语义（经 .dsh-probe 实证，2026-08-18）：
-    /// - `DSH_HOME` 指向 Aster 管理的 dsh-home/（DSH 的 profiles/用户补丁根）；
-    /// - `DSH_TELEMETRY_DISABLED=1` 关闭遥测（官方隐私开关：任何非空值即禁用）；
-    /// - `cwd = workspace`：dsh-fs-local 的 cwd 配置默认取 process.cwd()。
-    /// 旧 runner 的 PORT/HOST/DSH_WORKSPACE/DSH_CONFIG_DIR 在官方包中没有
-    /// 消费者，属于假动作，已删除。
-    pub fn start(
+    /// 孵化 DSH 子进程并立即返回，不在此等待 ready。
+    /// 调用方应立刻把实例写入 DshSlot，再在锁外 `wait_ready`。
+    pub fn spawn(
         app_data_root: &Path,
         runtime: &DshRuntime,
         workspace: &Path,
@@ -317,13 +381,20 @@ impl DshServer {
             .env("DSH_TELEMETRY_DISABLED", "1")
             .current_dir(workspace);
 
-        // 子进程输出落到 Aster 自己的 logs 目录：官方 CLI 首次引导会做 profile
-        // 自愈与依赖链接，失败时只有这份输出可诊断（截断到尾部 2KB 进错误消息）。
+        // 追加写入：保留上次启动失败的现场，不用 truncate 盖掉。
         let log_dir = app_data_root.join("logs");
         std::fs::create_dir_all(&log_dir).map_err(|e| format!("create log dir: {e}"))?;
         let log_path = log_dir.join("dsh-server.log");
-        let log_out =
-            std::fs::File::create(&log_path).map_err(|e| format!("create dsh log: {e}"))?;
+        let mut log_out = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&log_path)
+            .map_err(|e| format!("open dsh log: {e}"))?;
+        let _ = writeln!(
+            log_out,
+            "\n----- aster dsh spawn {} -----",
+            chrono::Utc::now().to_rfc3339()
+        );
         let log_err = log_out
             .try_clone()
             .map_err(|e| format!("clone dsh log handle: {e}"))?;
@@ -332,23 +403,31 @@ impl DshServer {
             .stdout(Stdio::from(log_out))
             .stderr(Stdio::from(log_err));
 
-        let child = cmd
-            .spawn()
+        let child = crate::supervisor::spawn_logged(&mut cmd, "dsh")
             .map_err(|e| format!("spawn DSH process failed: {e}"))?;
-        crate::diag::proc_event("spawn", "dsh", child.id());
 
-        let server = Self {
+        Ok(Self {
             child: Arc::new(Mutex::new(child)),
             port,
-            url: url.clone(),
+            url,
             version: runtime.version.clone(),
             managed: runtime.managed,
             stopped: Arc::new(AtomicBool::new(false)),
-        };
+        })
+    }
 
-        // 等待健康检查三层全部就绪。官方 CLI 首次引导（profile 自愈、
-        // 依赖链接、模块预热）实测可能超过 25 秒，给 90 秒；子进程提前
-        // 退出时 wait_ready 会立即返回，不会空等。
+    /// 孵化并等待健康检查。仅测试/无 slot 的调用方使用。
+    pub fn start(
+        app_data_root: &Path,
+        runtime: &DshRuntime,
+        workspace: &Path,
+        host: &str,
+        preferred_port: u16,
+    ) -> Result<Self, String> {
+        let log_path = app_data_root.join("logs").join("dsh-server.log");
+        let server = Self::spawn(app_data_root, runtime, workspace, host, preferred_port)?;
+        let url = server.url.clone();
+        let port = server.port;
         let ready_span = crate::diag::span("dsh_wait_ready", format!("port={port}"));
         let ready = server.wait_ready(Duration::from_secs(90));
         drop(ready_span);
@@ -370,8 +449,16 @@ impl DshServer {
                 )
             });
         }
-
         Ok(server)
+    }
+
+    /// 克隆健康检查所需的 Arc，以便在不持有 DshSlot 时 wait_ready。
+    pub fn readiness(&self) -> DshReadiness {
+        DshReadiness {
+            url: self.url.clone(),
+            child: Arc::clone(&self.child),
+            stopped: Arc::clone(&self.stopped),
+        }
     }
 
     /// 仅由内部测试或模拟器使用的快速构造器（用于端口冲突与状态测试）。
@@ -416,36 +503,7 @@ impl DshServer {
     /// - boot_ok：响应体含 window.__DSH_BOOT__（官方 CLI 服务端注入的 boot manifest；
     ///   前端缺失它必然空白——这是区分新旧 runner 的决定性证据）。
     pub fn probe(&self) -> HealthLayers {
-        let mut layers = HealthLayers {
-            runner_alive: !self.is_stopped() && !self.child_exited(),
-            static_ok: false,
-            boot_ok: false,
-        };
-        if !layers.runner_alive {
-            return layers;
-        }
-        let agent = ureq::AgentBuilder::new()
-            .timeout_connect(Duration::from_millis(500))
-            .timeout_read(Duration::from_millis(1000))
-            .build();
-        let resp = match agent.get(&self.url).call() {
-            Ok(resp) => resp,
-            Err(_) => return layers,
-        };
-        if resp.status() != 200 {
-            return layers;
-        }
-        let mut body = String::new();
-        // 官方首页约 12KB（boot manifest 注入在 head，#root 在 body 尾部），
-        // 读取上限必须覆盖完整页面，不能把截断误判为标记缺失。
-        let reader = resp.into_reader();
-        let mut limited = reader.take(65536);
-        if limited.read_to_string(&mut body).is_err() {
-            return layers;
-        }
-        layers.static_ok = body.contains(HEALTH_MARKER_TITLE) && body.contains(HEALTH_MARKER_ROOT);
-        layers.boot_ok = body.contains(HEALTH_MARKER_BOOT);
-        layers
+        self.readiness().probe()
     }
 
     /// 三层全部通过才算 healthy。
@@ -455,17 +513,7 @@ impl DshServer {
 
     /// 轮询等待就绪；子进程提前退出立即返回 false，不空等超时。
     pub fn wait_ready(&self, timeout: Duration) -> bool {
-        let deadline = Instant::now() + timeout;
-        while Instant::now() < deadline {
-            if self.probe_healthy() {
-                return true;
-            }
-            if self.child_exited() {
-                return false;
-            }
-            std::thread::sleep(Duration::from_millis(150));
-        }
-        false
+        self.readiness().wait_ready(timeout)
     }
 
     pub fn status(&self) -> DshStatus {
@@ -498,16 +546,18 @@ impl DshServer {
     /// 终止 DSH 进程树并等待子进程回收。taskkill 返回不代表进程已消失；
     /// 超时如实报错，不把“已发 taskkill”伪装成“已停止”。
     pub fn stop(&mut self) -> io::Result<()> {
+        self.stop_with_budget(DSH_STOP_WAIT)
+    }
+
+    pub fn stop_with_budget(&mut self, wait: Duration) -> io::Result<()> {
         if self.stopped.swap(true, Ordering::SeqCst) {
             return Ok(()); // 已停止过
         }
         let pid = self.pid();
         crate::diag::proc_event("stop_requested", "dsh", pid);
-        // 这个 Span 覆盖 taskkill + 最多 5 秒的回收等待。退出路径上它整段
-        // 占用主线程，是“窗口已消失但 aster.exe 还在”的主要来源。
         let mut span = crate::diag::span("dsh_stop_wait", format!("pid={pid}"));
         crate::supervisor::kill_process_tree(pid)?;
-        let deadline = Instant::now() + Duration::from_secs(5);
+        let deadline = Instant::now() + wait;
         loop {
             if self.child_exited() {
                 crate::diag::proc_event("exited", "dsh", pid);
@@ -515,11 +565,11 @@ impl DshServer {
             }
             if Instant::now() >= deadline {
                 if let Some(s) = span.as_mut() {
-                    s.note("TIMED OUT: still alive 5s after taskkill");
+                    s.note("TIMED OUT: still alive after stop budget");
                 }
                 return Err(io::Error::new(
                     io::ErrorKind::TimedOut,
-                    "DSH process still alive 5s after taskkill /T /F",
+                    "DSH process still alive after taskkill /T /F",
                 ));
             }
             std::thread::sleep(Duration::from_millis(50));
@@ -696,6 +746,37 @@ mod tests {
         assert!(
             !text.contains(&format!(" {pid} ")),
             "child {pid} should be terminated after drop; tasklist said: {text}"
+        );
+    }
+
+    #[test]
+    fn readiness_wait_ready_does_not_need_exclusive_server() {
+        let html: &'static str = Box::leak(
+            format!(
+                "<html><head><title>{}</title><script>window.__DSH_BOOT__ = {{\"rev\":\"x\"}}</script></head><body>{}</body></html>",
+                HEALTH_MARKER_TITLE, HEALTH_MARKER_ROOT
+            )
+            .into_boxed_str(),
+        );
+        let port = serve_fixed(html);
+        let server = DshServer::new_for_testing(long_running_child(), port, "0.0.1".into(), true);
+        let ready = server.readiness();
+        assert!(
+            ready.wait_ready(Duration::from_secs(5)),
+            "cloned readiness handle must be able to wait without exclusive DshServer"
+        );
+    }
+
+    #[test]
+    fn stop_with_budget_returns_within_budget() {
+        let mut server =
+            DshServer::new_for_testing(long_running_child(), 39930, "0.0.1".into(), true);
+        let started = Instant::now();
+        let result = server.stop_with_budget(Duration::from_millis(800));
+        assert!(result.is_ok(), "{result:?}");
+        assert!(
+            started.elapsed() < Duration::from_secs(3),
+            "stop_with_budget should not use the 5s UI wait"
         );
     }
 }

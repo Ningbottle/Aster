@@ -1,3 +1,5 @@
+#![allow(clippy::unused_async)]
+
 use crate::platform::credentials;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
@@ -23,7 +25,7 @@ pub struct GithubAuthStatus {
     pub source: String,
 }
 #[tauri::command]
-pub fn github_device_start(client_id: Option<String>) -> Result<DeviceCodeResponse, String> {
+pub async fn github_device_start(client_id: Option<String>) -> Result<DeviceCodeResponse, String> {
     let cid = client_id
         .filter(|s| !s.trim().is_empty())
         .unwrap_or_else(|| "Ov23liAsterDesktop".to_string());
@@ -85,7 +87,7 @@ pub fn github_device_start(client_id: Option<String>) -> Result<DeviceCodeRespon
 }
 
 #[tauri::command]
-pub fn github_device_poll(client_id: String, device_code: String) -> Result<DevicePollResult, String> {
+pub async fn github_device_poll(client_id: String, device_code: String) -> Result<DevicePollResult, String> {
     let cid = if client_id.trim().is_empty() {
         "Ov23liAsterDesktop".to_string()
     } else {

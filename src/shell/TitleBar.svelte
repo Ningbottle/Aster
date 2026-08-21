@@ -26,6 +26,7 @@
   ];
 
   let showMenu = false;
+  let chromeError: string | null = null;
 
   function toggleMenu(e: MouseEvent) {
     e.stopPropagation();
@@ -38,26 +39,29 @@
   }
 
   async function minimize() {
+    chromeError = null;
     try {
       await getCurrentWindow().minimize();
     } catch (e) {
-      console.debug("Browser preview mode minimize fallback:", e);
+      chromeError = `最小化失败: ${String(e)}`;
     }
   }
 
   async function toggleMaximize() {
+    chromeError = null;
     try {
       await getCurrentWindow().toggleMaximize();
     } catch (e) {
-      console.debug("Browser preview mode toggleMaximize fallback:", e);
+      chromeError = `最大化失败: ${String(e)}`;
     }
   }
 
   async function close() {
+    chromeError = null;
     try {
       await getCurrentWindow().close();
     } catch (e) {
-      console.debug("Browser preview mode close fallback:", e);
+      chromeError = `关闭失败: ${String(e)}`;
     }
   }
 
@@ -68,13 +72,13 @@
 
 <svelte:window on:click={handleWindowClick} on:keydown={(e) => e.key === "Escape" && (showMenu = false)} />
 
-<header class="titlebar" data-tauri-drag-region>
-  <button type="button" class="app-mark" title="Aster 工作台" aria-label="Aster 工作台" on:click={() => onSelectView("pi")}>
+<header class="titlebar">
+  <button type="button" class="app-mark no-drag" title="Aster 工作台" aria-label="Aster 工作台" on:click={() => onSelectView("pi")}>
     <span class="dot-logo">A</span>
     <span>Aster 工作台</span>
   </button>
 
-  <div class="drag" data-tauri-drag-region>
+  <div class="cluster no-drag">
     <div class="tb-tabs" role="tablist" aria-label="工作区">
       {#each openTabs as tabId (tabId)}
         {@const svc = SERVICES.find((s) => s.id === tabId)}
@@ -135,7 +139,13 @@
     {/if}
   </div>
 
-  <div class="caption-btns">
+  <div class="drag-space" data-tauri-drag-region></div>
+
+  {#if chromeError}
+    <span class="chrome-error" title={chromeError}>{chromeError}</span>
+  {/if}
+
+  <div class="caption-btns no-drag">
     <button type="button" aria-label="最小化" on:click={minimize}>
       <svg viewBox="0 0 10 10"><path d="M1 5h8" stroke="currentColor" stroke-width="1" /></svg>
     </button>
@@ -158,6 +168,32 @@
     border-bottom: 1px solid var(--border);
     padding-left: 12px;
     user-select: none;
+  }
+  .no-drag {
+    -webkit-app-region: no-drag;
+    app-region: no-drag;
+  }
+  .cluster {
+    position: relative;
+    display: flex;
+    align-items: center;
+    min-width: 0;
+  }
+  .drag-space {
+    flex: 1;
+    height: 100%;
+    min-width: 24px;
+    -webkit-app-region: drag;
+    app-region: drag;
+  }
+  .chrome-error {
+    max-width: 180px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 11px;
+    color: var(--danger);
+    margin-right: 8px;
   }
   .app-mark {
     display: flex;
@@ -184,16 +220,6 @@
     color: var(--surface);
     font-size: 10px;
     font-weight: 700;
-  }
-  .drag {
-    flex: 1;
-    height: 100%;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    position: relative;
-    min-width: 0;
-    padding: 0 8px;
   }
   .tb-tabs {
     display: flex;

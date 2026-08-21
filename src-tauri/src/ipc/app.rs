@@ -1,3 +1,5 @@
+#![allow(clippy::unused_async)]
+
 use crate::hosts::profile as host_profile;
 use crate::platform::{app_data, db, evidence, open_layout_and_db};
 use serde::Serialize;
@@ -11,7 +13,7 @@ pub struct AppStatus {
 }
 
 #[tauri::command]
-pub fn get_app_status() -> Result<AppStatus, String> {
+pub async fn get_app_status() -> Result<AppStatus, String> {
     let layout = app_data::AppDataLayout::open_default().map_err(|e| e.to_string())?;
     let db_path = layout.database.join("aster.db");
     let mut conn = db::open_connection(&db_path).map_err(|e| e.to_string())?;
@@ -27,7 +29,7 @@ pub fn get_app_status() -> Result<AppStatus, String> {
 }
 
 #[tauri::command]
-pub fn host_profiles_list(
+pub async fn host_profiles_list(
     project_root: Option<String>,
 ) -> Result<Vec<host_profile::DiscoveredHost>, String> {
     let p_str = match project_root {

@@ -1,9 +1,11 @@
+#![allow(clippy::unused_async)]
+
 use crate::skills as skill_flow;
 use serde::Serialize;
 use std::path::PathBuf;
 
 #[tauri::command]
-pub fn skill_status() -> Result<serde_json::Value, String> {
+pub async fn skill_status() -> Result<serde_json::Value, String> {
     let (layout, conn) = crate::platform::open_layout_and_db()?;
     let mut snapshots = Vec::new();
     {
@@ -85,7 +87,7 @@ pub fn skill_status() -> Result<serde_json::Value, String> {
     }))
 }
 #[tauri::command]
-pub fn skills_scan_repo(
+pub async fn skills_scan_repo(
     repo_path: Option<String>,
     repo_name: Option<String>,
 ) -> Result<skill_flow::SkillRepoGroup, String> {
@@ -146,7 +148,7 @@ pub fn skills_scan_repo(
 }
 
 #[tauri::command]
-pub fn skill_get_diff(
+pub async fn skill_get_diff(
     base_snapshot_id: String,
     head_snapshot_id: String,
 ) -> Result<skill_flow::SnapshotDiff, String> {
@@ -163,7 +165,7 @@ pub fn skill_get_diff(
 }
 
 #[tauri::command]
-pub fn skill_get_translation(
+pub async fn skill_get_translation(
     skill_name: String,
     current_snapshot_id: Option<String>,
 ) -> Result<Option<skill_flow::TranslationDoc>, String> {
@@ -184,7 +186,7 @@ pub fn skill_get_translation(
 }
 
 #[tauri::command]
-pub fn skill_save_translation(doc: skill_flow::TranslationDoc) -> Result<(), String> {
+pub async fn skill_save_translation(doc: skill_flow::TranslationDoc) -> Result<(), String> {
     if !skill_flow::is_safe_id_segment(&doc.skill_name) {
         return Err(format!("invalid doc.skill_name: {}", doc.skill_name));
     }
@@ -211,7 +213,7 @@ pub struct SkillItemDto {
 }
 
 #[tauri::command]
-pub fn skills_list() -> Result<Vec<SkillItemDto>, String> {
+pub async fn skills_list() -> Result<Vec<SkillItemDto>, String> {
     let (layout, conn) = crate::platform::open_layout_and_db()?;
     let mut stmt = conn
         .prepare("SELECT id, source_repo, commit_sha, skill_name, file_count, content_sha, created_at FROM skill_snapshot ORDER BY skill_name ASC, created_at DESC, id DESC")
@@ -324,7 +326,7 @@ pub fn skills_list() -> Result<Vec<SkillItemDto>, String> {
     Ok(skills)
 }
 #[tauri::command]
-pub fn skill_batch_deploy_plan(
+pub async fn skill_batch_deploy_plan(
     snapshot_id: String,
     targets: Vec<skill_flow::DeploymentTarget>,
 ) -> Result<skill_flow::DeploymentPlan, String> {
@@ -361,7 +363,7 @@ pub fn skill_batch_deploy_plan(
 }
 
 #[tauri::command]
-pub fn skill_batch_deploy_apply(
+pub async fn skill_batch_deploy_apply(
     snapshot_id: String,
     targets: Vec<skill_flow::DeploymentTarget>,
 ) -> Result<skill_flow::BatchDeployResult, String> {
@@ -391,7 +393,7 @@ pub fn skill_batch_deploy_apply(
     skill_flow::deploy_batch_planned(&mut conn, &snap, &resolved_targets, &managed_roots)
 }
 #[tauri::command]
-pub fn skills_scan_github(
+pub async fn skills_scan_github(
     repo: String,
     git_ref: Option<String>,
     skill_path: Option<String>,
@@ -455,13 +457,13 @@ pub fn skills_scan_github(
     Ok(group)
 }
 #[tauri::command]
-pub fn skill_quarantine_list() -> Result<Vec<skill_flow::QuarantineItemDto>, String> {
+pub async fn skill_quarantine_list() -> Result<Vec<skill_flow::QuarantineItemDto>, String> {
     let (layout, conn) = crate::platform::open_layout_and_db()?;
     skill_flow::list_quarantine_items(&conn, &layout.quarantine)
 }
 
 #[tauri::command]
-pub fn skill_quarantine_delete(quarantine_id: String) -> Result<(), String> {
+pub async fn skill_quarantine_delete(quarantine_id: String) -> Result<(), String> {
     if !skill_flow::is_safe_id_segment(&quarantine_id) {
         return Err(format!("invalid quarantine_id: {quarantine_id}"));
     }

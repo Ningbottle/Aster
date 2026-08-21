@@ -100,7 +100,8 @@ pub fn run() {
                 if window.label() == "main" {
                     for (label, win) in window.webview_windows() {
                         if label != "main" {
-                            let _span = super::diag::span("shutdown", format!("close_window:{label}"));
+                            let _span =
+                                super::diag::span("shutdown", format!("close_window:{label}"));
                             let _ = win.close();
                         }
                     }
@@ -128,7 +129,8 @@ pub fn run() {
                         Ok(mut guard) => match guard.take() {
                             Some(mut server) => {
                                 let pid = server.pid();
-                                let result = server.stop();
+                                let result = server
+                                    .stop_with_budget(crate::dsh::connector::DSH_EXIT_STOP_WAIT);
                                 if let Some(s) = span.as_mut() {
                                     s.note(format!("pid={pid} ok={}", result.is_ok()));
                                 }
@@ -149,9 +151,17 @@ pub fn run() {
                 {
                     let mut span = super::diag::span("shutdown", "pi_stop");
                     let pi = handle.state::<crate::pi::runtime::PiRuntimeManager>();
-                    let result = pi.stop();
-                    if let Some(s) = span.as_mut() {
-                        s.note(format!("ok={}", result.is_ok()));
+                    match pi.try_stop() {
+                        Ok(()) => {
+                            if let Some(s) = span.as_mut() {
+                                s.note("ok=true");
+                            }
+                        }
+                        Err(e) => {
+                            if let Some(s) = span.as_mut() {
+                                s.note(format!("skipped: {e}"));
+                            }
+                        }
                     }
                 }
             }
@@ -174,18 +184,59 @@ fn run_event_name(event: &tauri::RunEvent) -> Option<&'static str> {
 
 #[cfg(test)]
 mod command_threading_tests {
-    use crate::ipc::dsh::{dsh_open_window, DshSlot};
+    use crate::ipc::dsh::{dsh_open_window, dsh_status, DshSlot};
+    use crate::ipc::github::github_device_poll;
+    use crate::ipc::pi::{pi_runtime_snapshot, pi_session_abort, pi_session_snapshot};
+    use crate::pi::runtime::PiRuntimeManager;
+    use tauri::State;
+
+    fn is_future<F: std::future::Future>(_: &F) {}
 
     // wry#583 / tauri 官方文档：Windows 上在同步命令或事件处理器中 build() 第二个
-    // WebView2 窗口会死锁主线程（2026-08-18 实测：HWND 建出、渲染进程孵化，但初始化
-    // 永不完成，此后全部 IPC 命令派发与窗口消息处理瘫瘊，表现为“独立窗口空白 +
-    // 停止卡住 + 退出残留”）。GUI 死锁无法在 CI 重现，这里用类型系统锁定
-    // dsh_open_window 保持 async：一旦被改回同步 fn，本测试编译失败。
+    // WebView2 窗口会死锁主线程。用类型系统锁定关键命令保持 async。
     #[test]
     fn dsh_open_window_stays_async() {
-        fn is_future<F: std::future::Future>(_: &F) {}
         let _check = |app: tauri::AppHandle, state: tauri::State<'_, DshSlot>| {
             is_future(&dsh_open_window(app, state));
         };
+    }
+
+    #[test]
+    fn blocking_commands_stay_async() {
+        let _abort = |state: State<'_, PiRuntimeManager>| {
+            is_future(&pi_session_abort(state));
+        };
+        let _snap = |state: State<'_, PiRuntimeManager>| {
+            is_future(&pi_session_snapshot(state));
+        };
+        let _runtime_snap = |state: State<'_, PiRuntimeManager>| {
+            is_future(&pi_runtime_snapshot(state));
+        };
+        let _status = |state: tauri::State<'_, DshSlot>| {
+            is_future(&dsh_status(state));
+        };
+        let _poll = || {
+            is_future(&github_device_poll(String::new(), String::new()));
+        };
+    }
+
+    #[test]
+    fn ipc_does_not_register_unscoped_skill_rollback_or_m1_pipeline() {
+        let src = include_str!("boot.rs");
+        let handler = src
+            .split("generate_handler![")
+            .nth(1)
+            .and_then(|rest| rest.split(']').next())
+            .expect("generate_handler list");
+        for banned in [
+            "skill_rollback_latest",
+            "skill_rollback_all",
+            "skill_m1_pipeline",
+        ] {
+            assert!(
+                !handler.contains(banned),
+                "{banned} must not be a Tauri command"
+            );
+        }
     }
 }

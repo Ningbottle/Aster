@@ -1,10 +1,10 @@
 ﻿# 临时运行期稳定性取证脚本（Runtime Stability 专项审计，2026-08-19）。
 #
 # 用途：在「Aster 卡住 / 关不掉 / 疑似残留」的现场跑一次，抓取无法事后重建的
-# 瞬时状态。与 src-tauri/src/diag.rs 配套：diag.jsonl 说明 Rust 侧走到哪一步，
+# 瞬时状态。与 src-tauri/src/ipc/diag.rs 配套：diag.jsonl 说明 Rust 侧走到哪一步，
 # 本脚本说明操作系统侧当时是什么样子。
 #
-# 审计结束后与 diag.rs 一并删除，不要在其上扩展成常驻监控。
+# 审计结束后与 ipc/diag.rs 一并删除，不要在其上扩展成常驻监控。
 #
 # 用法：
 #   powershell -NoProfile -ExecutionPolicy Bypass -File scripts/dev/capture-runtime-state.ps1
