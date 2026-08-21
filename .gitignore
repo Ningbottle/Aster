@@ -20,8 +20,8 @@ src-tauri/gen/schemas/
 .qoder/
 scratch/
 
-# Public repository: one product summary + one AI development policy.
-# Local detailed docs remain readable to AI but are not published to GitHub.
+# Public repository: product intro + commands, and one AI development policy.
+# Local status, architecture map, plans and evidence stay on disk but are not published.
 *.md
 *.mdx
 !/README.md
