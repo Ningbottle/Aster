@@ -1,11 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   clampSidebarWidth,
+  clampSkillsSidebarWidth,
   isSidebarVisible,
   loadPiSidebarHidden,
   loadSkillsSidebarHidden,
+  loadSkillsSidebarWidth,
   savePiSidebarHidden,
   saveSkillsSidebarHidden,
+  saveSkillsSidebarWidth,
 } from "./sidebarPreferences";
 
 // Vitest 环境为 node，无原生 localStorage；用 Map 模拟。
@@ -84,6 +87,26 @@ describe("Skills sidebar hidden preference", () => {
     expect(loadPiSidebarHidden()).toBe(false);
     savePiSidebarHidden(true);
     expect(loadSkillsSidebarHidden()).toBe(true);
+  });
+});
+
+describe("Skills sidebar width preference", () => {
+  it("clamps Skills width between 140 and 300", () => {
+    expect(clampSkillsSidebarWidth(10)).toBe(140);
+    expect(clampSkillsSidebarWidth(176)).toBe(176);
+    expect(clampSkillsSidebarWidth(900)).toBe(300);
+  });
+
+  it("round-trips save then load on the dedicated key", () => {
+    saveSkillsSidebarWidth(236);
+    expect(loadSkillsSidebarWidth()).toBe(236);
+    expect(store.get("aster.sidebar.skills.width")).toBe("236");
+  });
+
+  it("migrates a legacy aster.sideWidths.slim value once", () => {
+    store.set("aster.sideWidths", JSON.stringify({ slim: 200, full: 248 }));
+    expect(loadSkillsSidebarWidth()).toBe(200);
+    expect(store.get("aster.sidebar.skills.width")).toBe("200");
   });
 });
 

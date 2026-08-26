@@ -200,6 +200,7 @@
     align-items: center;
     gap: 8px;
     margin-right: 12px;
+    min-width: 0;
     font-family: var(--font-display);
     font-weight: 600;
     font-size: 12.5px;
@@ -209,6 +210,11 @@
     border: none;
     color: var(--fg);
     padding: 0;
+  }
+  .app-mark > span:last-child {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
   .app-mark .dot-logo {
     width: 16px;

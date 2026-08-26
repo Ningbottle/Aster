@@ -504,3 +504,65 @@ fn runtime_snapshot_ready_then_busy_then_closed() {
     let setup = mgr.runtime_snapshot(false);
     assert_eq!(setup.lifecycle, "needsSetup");
 }
+
+#[test]
+fn snapshot_and_idle_probe_do_not_clear_crashed_slot() {
+    let tmp = tempfile::tempdir().unwrap();
+    let project_a = tmp.path().join("proj-a");
+    let project_b = tmp.path().join("proj-b");
+    fs::create_dir_all(&project_a).unwrap();
+    fs::create_dir_all(&project_b).unwrap();
+    let a1 = write_session_file(&project_a, "a1.jsonl");
+    let b1 = write_session_file(&project_b, "b1.jsonl");
+    let ctrl = FakePiController::new();
+    let mgr = PiRuntimeManager::with_fake(Arc::clone(&ctrl));
+    mgr.open_session(&dummy_runtime(), &project_a, &a1, sink())
+        .unwrap();
+    ctrl.force_closed.store(true, Ordering::SeqCst);
+
+    let snap_err = mgr.snapshot().expect_err("crashed snapshot must fail");
+    assert!(
+        snap_err.contains("no active Pi session"),
+        "{snap_err}"
+    );
+    assert!(mgr.bound_binding().is_some(), "snapshot must not drop crashed slot");
+    assert_eq!(mgr.runtime_snapshot(true).lifecycle, "crashed");
+
+    let other = mgr
+        .open_session(&dummy_runtime(), &project_b, &b1, sink())
+        .expect_err("crashed slot must block other project");
+    assert!(
+        other.to_string().contains("活动 Pi Session"),
+        "{other}"
+    );
+    assert!(mgr.bound_binding().is_some());
+    assert_eq!(mgr.runtime_snapshot(true).lifecycle, "crashed");
+}
+
+#[test]
+fn crashed_same_project_open_restarts_and_stop_releases_slot() {
+    let tmp = tempfile::tempdir().unwrap();
+    let project_a = tmp.path().join("proj-a");
+    fs::create_dir_all(&project_a).unwrap();
+    let a1 = write_session_file(&project_a, "a1.jsonl");
+    let ctrl = FakePiController::new();
+    let mgr = PiRuntimeManager::with_fake(Arc::clone(&ctrl));
+    mgr.open_session(&dummy_runtime(), &project_a, &a1, sink())
+        .unwrap();
+    let first_id = mgr.runtime_snapshot(true).runtime_instance_id;
+    ctrl.force_closed.store(true, Ordering::SeqCst);
+    assert_eq!(mgr.runtime_snapshot(true).lifecycle, "crashed");
+    ctrl.force_closed.store(false, Ordering::SeqCst);
+
+    let recovered = mgr
+        .open_session(&dummy_runtime(), &project_a, &a1, sink())
+        .expect("same-project open is crash recovery");
+    assert_ne!(Some(recovered.binding.instance_id), first_id);
+    assert_eq!(mgr.runtime_snapshot(true).lifecycle, "ready");
+
+    ctrl.force_closed.store(true, Ordering::SeqCst);
+    assert_eq!(mgr.runtime_snapshot(true).lifecycle, "crashed");
+    mgr.stop().expect("stop of already-exited process releases slot");
+    assert!(mgr.bound_binding().is_none());
+    assert_eq!(mgr.runtime_snapshot(true).lifecycle, "closed");
+}

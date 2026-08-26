@@ -2,6 +2,10 @@
   import { tick } from "svelte";
   import { renderMarkdown } from "../../../platform/markdown";
   import { piConsoleStore } from "../store";
+  import {
+    assistantTextFromContent,
+    thinkingFromContent,
+  } from "../sessionReducer";
   import type { PiMessage } from "../../../types";
 
   let transcriptEl: HTMLElement;
@@ -9,8 +13,10 @@
 
   $: messages = $piConsoleStore.messages;
   $: streamingText = $piConsoleStore.streamingText;
+  $: streamingThinking = $piConsoleStore.streamingThinking;
+  $: liveTools = $piConsoleStore.liveTools;
   $: streaming = $piConsoleStore.sessionStatus === "streaming";
-  $: messages, streamingText, scrollIfNeeded();
+  $: messages, streamingText, streamingThinking, liveTools, scrollIfNeeded();
 
   async function scrollIfNeeded() {
     await tick();
@@ -26,17 +32,10 @@
 
   function textFromContent(content: unknown): string {
     if (typeof content === "string") return content;
+    const text = assistantTextFromContent(content);
+    if (text) return text;
     if (!Array.isArray(content)) return content == null ? "" : JSON.stringify(content, null, 2);
-    return content
-      .map((block) => {
-        if (!block || typeof block !== "object") return "";
-        const rec = block as Record<string, unknown>;
-        if (rec.type === "text" && typeof rec.text === "string") return rec.text;
-        if (rec.type === "thinking" && typeof rec.thinking === "string") return rec.thinking;
-        return "";
-      })
-      .filter(Boolean)
-      .join("\n\n");
+    return "";
   }
 
   function toolsFromMessage(msg: PiMessage): { name: string; args: string; isError?: boolean }[] {
@@ -85,25 +84,37 @@
       console.debug("copy failed:", err);
     }
   }
+
+  function toolSummary(tool: { name: string; isError?: boolean; status?: string }): string {
+    if (tool.status === "running") return `${tool.name} · 执行中`;
+    return `${tool.name}${tool.isError ? " · 失败" : ""}`;
+  }
 </script>
 
 <div class="pi-transcript" bind:this={transcriptEl} on:scroll={onScroll} aria-live="polite">
-  {#if messages.length === 0 && !streamingText}
+  {#if messages.length === 0 && !streamingText && !streamingThinking && liveTools.length === 0}
     <div class="empty faint">从左侧选择会话后，将通过 Pi RPC 恢复原生消息。</div>
   {/if}
 
   {#each messages as msg, i (`${msg.role}-${i}`)}
+    {@const thinking = thinkingFromContent(msg.content)}
     <article class="msg" class:user={msg.role === "user"}>
       <div class="role">{roleLabel(msg)}</div>
       <div class="bubble">
+        {#if thinking}
+          <details class="thinking">
+            <summary>思考</summary>
+            <pre class="plain">{thinking}</pre>
+          </details>
+        {/if}
         {#if msg.role === "user"}
           <div class="plain">{textFromContent(msg.content)}</div>
-        {:else}
+        {:else if textFromContent(msg.content)}
           <div class="md-body">{@html renderMarkdown(textFromContent(msg.content))}</div>
         {/if}
         {#each toolsFromMessage(msg) as tool, ti (`${i}-${ti}`)}
           <details class="tool" class:err={tool.isError}>
-            <summary>{tool.name}{tool.isError ? " · 失败" : ""}</summary>
+            <summary>{toolSummary(tool)}</summary>
             <pre><code>{tool.args}</code></pre>
             <button type="button" class="copy" on:click={() => copyText(tool.args)}>复制</button>
           </details>
@@ -112,11 +123,30 @@
     </article>
   {/each}
 
-  {#if streamingText}
+  {#if streamingThinking || streamingText || liveTools.length > 0}
     <article class="msg">
       <div class="role">Pi · 生成中</div>
       <div class="bubble">
-        <div class="md-body">{@html renderMarkdown(streamingText)}</div>
+        {#if streamingThinking}
+          <details class="thinking" open>
+            <summary>思考</summary>
+            <pre class="plain">{streamingThinking}</pre>
+          </details>
+        {/if}
+        {#each liveTools as tool (tool.id)}
+          <details class="tool" class:err={tool.isError} open>
+            <summary>{toolSummary(tool)}</summary>
+            {#if tool.args}
+              <pre><code>{tool.args}</code></pre>
+            {/if}
+            {#if tool.result}
+              <pre><code>{tool.result}</code></pre>
+            {/if}
+          </details>
+        {/each}
+        {#if streamingText}
+          <div class="md-body">{@html renderMarkdown(streamingText)}</div>
+        {/if}
       </div>
     </article>
   {/if}
@@ -167,6 +197,21 @@
     background: var(--surface-2);
     padding: 10px;
     border-radius: var(--r-sm);
+  }
+  .thinking {
+    margin-bottom: 10px;
+    border: 1px solid var(--border);
+    border-radius: var(--r-md);
+    padding: 6px 10px;
+    background: var(--surface-2);
+    font-size: 12px;
+    color: var(--muted);
+  }
+  .thinking pre {
+    margin: 8px 0 0;
+    white-space: pre-wrap;
+    max-height: 240px;
+    overflow: auto;
   }
   .tool {
     margin-top: 10px;

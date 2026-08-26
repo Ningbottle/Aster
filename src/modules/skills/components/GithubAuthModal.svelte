@@ -197,13 +197,24 @@
       close();
     }
   }
+
+  function onBackdropClick(e: MouseEvent) {
+    if (e.target === e.currentTarget) close();
+  }
 </script>
 
 <svelte:window on:keydown={handleKeydown} />
 
 {#if show}
-  <div class="modal-backdrop" on:click={close}>
-    <div class="modal-card" on:click|stopPropagation>
+  <div
+    class="modal-backdrop"
+    role="button"
+    tabindex="-1"
+    aria-label="关闭 GitHub 授权对话框"
+    on:click={onBackdropClick}
+    on:keydown={handleKeydown}
+  >
+    <div class="modal-card">
       <div class="modal-header">
         <div class="modal-title">
           <svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor">

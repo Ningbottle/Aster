@@ -72,7 +72,7 @@ const sidebarInfo = `
       resizeX: resize ? resize.getBoundingClientRect().x + resize.getBoundingClientRect().width / 2 : null,
       resizeY: resize ? resize.getBoundingClientRect().y + resize.getBoundingClientRect().height / 2 : null,
       storedPiWidth: localStorage.getItem('aster.sidebar.pi.width'),
-      storedSkillsWidths: localStorage.getItem('aster.sideWidths'),
+      storedSkillsWidth: localStorage.getItem('aster.sidebar.skills.width'),
     };
   })()
 `;

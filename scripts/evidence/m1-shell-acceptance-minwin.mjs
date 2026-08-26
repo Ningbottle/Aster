@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-// M1 acceptance — Task 2: 1100x700 minimum-window overflow check per module.
-// Expects the real window to already be resized to 1100x700 externally.
+// M1 acceptance — Task 2: minimum-window overflow check per module.
+// Expects the real window already at the configured min size (800x500).
 // For each module: measure horizontal overflow (scrollWidth vs clientWidth) on body/main/sidebar.
 
 const PORT = process.env.CDP_PORT ? Number(process.env.CDP_PORT) : 9222;
@@ -85,7 +85,7 @@ const overflowProbe = `
 
 async function main() {
   const wsUrl = await getPage();
-  const report = { phase: "minwin-1100x700", observations: {} };
+  const report = { phase: "minwin-800x500", observations: {} };
 
   // Pi
   report.observations.pi = await evalJs(wsUrl, overflowProbe);

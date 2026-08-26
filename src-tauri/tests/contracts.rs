@@ -9,7 +9,6 @@ use aster_lib::ipc::pi::{
     PiActiveSessionDto, PiEventEnvelopeDto, PiProjectNodeDto, PiSessionArchiveArgs,
     PiSessionCreateArgs, PiSessionIndexRemoveArgs, PiSessionOpenArgs, PiSessionPromptArgs,
     PiSessionSetModelArgs, PiSessionSetNameArgs, PiSessionSetThinkingArgs, PiSessionSummaryDto,
-    PERMISSION_SUMMARY,
 };
 use aster_lib::pi::runtime::PiRuntimeSnapshotDto;
 use aster_lib::skills::{
@@ -61,17 +60,6 @@ struct SkillBatchDeployApplyArgs {
     #[serde(rename = "snapshotId")]
     snapshot_id: String,
     targets: Vec<DeploymentTarget>,
-}
-
-#[derive(Debug, Deserialize)]
-struct PiSetModelArgs {
-    #[serde(rename = "modelId")]
-    model_id: String,
-}
-
-#[derive(Debug, Deserialize)]
-struct PiPromptArgs {
-    prompt: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -158,16 +146,6 @@ fn contract_invoke_arg_payloads() {
             .expect("SkillBatchDeployApplyArgs 应当反序列化成功");
     assert_eq!(apply_args.snapshot_id, "snap-00756142ab04");
     assert_eq!(apply_args.targets.len(), 1);
-
-    // pi_set_model 参数
-    let set_model_args: PiSetModelArgs = serde_json::from_value(fixtures["PiSetModelArgs"].clone())
-        .expect("PiSetModelArgs 应当反序列化成功");
-    assert_eq!(set_model_args.model_id, "claude-3-5-sonnet-20241022");
-
-    // pi_prompt 参数
-    let prompt_args: PiPromptArgs = serde_json::from_value(fixtures["PiPromptArgs"].clone())
-        .expect("PiPromptArgs 应当反序列化成功");
-    assert!(prompt_args.prompt.contains("Hello Pi"));
 
     // dsh_start 参数
     let dsh_args: DshStartArgs = serde_json::from_value(fixtures["DshStartArgs"].clone())
@@ -439,7 +417,7 @@ fn contract_pi_session_command_payloads_are_camel_case() {
         serde_json::from_value(fixtures["PiActiveSessionDto_sample"].clone()).unwrap();
     assert_eq!(active.runtime_instance_id, 1);
     assert_eq!(active.session_id, "session-1");
-    assert_eq!(active.permission_summary, PERMISSION_SUMMARY);
+    assert_eq!(active.permission_summary, None);
     assert!(serde_json::to_value(&active)
         .unwrap()
         .get("sessionFile")
@@ -448,6 +426,7 @@ fn contract_pi_session_command_payloads_are_camel_case() {
     let node: PiProjectNodeDto =
         serde_json::from_value(fixtures["PiProjectNodeDto_sample"].clone()).unwrap();
     assert_eq!(node.sessions.len(), 1);
+    assert!(node.archived_sessions.is_empty());
     let summary: PiSessionSummaryDto = node.sessions[0].clone();
     assert!(summary.is_active);
 

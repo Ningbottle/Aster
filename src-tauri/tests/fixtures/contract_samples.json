@@ -87,12 +87,6 @@
       }
     ]
   },
-  "PiSetModelArgs": {
-    "modelId": "claude-3-5-sonnet-20241022"
-  },
-  "PiPromptArgs": {
-    "prompt": "Hello Pi, please summarize our current tasks."
-  },
   "PiSessionCreateArgs": {
     "projectPath": "C:\\Workspace\\project-a"
   },
@@ -147,7 +141,7 @@
       "contextWindow": 1000,
       "percent": 2
     },
-    "permissionSummary": "windows_user",
+    "permissionSummary": null,
     "messages": [
       {
         "role": "user",
@@ -168,7 +162,8 @@
         "availability": "available",
         "isActive": true
       }
-    ]
+    ],
+    "archivedSessions": []
   },
   "PiEventEnvelopeDto_sample": {
     "runtimeInstanceId": 9,

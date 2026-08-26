@@ -22,8 +22,6 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tauri::{Emitter, State};
 
-pub const PERMISSION_SUMMARY: &str = "windows_user";
-
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct PiSessionSummaryDto {
@@ -42,6 +40,8 @@ pub struct PiProjectNodeDto {
     pub path: String,
     pub display_name: String,
     pub sessions: Vec<PiSessionSummaryDto>,
+    #[serde(default)]
+    pub archived_sessions: Vec<PiSessionSummaryDto>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -58,7 +58,7 @@ pub struct PiActiveSessionDto {
     pub is_compacting: bool,
     pub message_count: u64,
     pub context_usage: Option<Value>,
-    pub permission_summary: String,
+    pub permission_summary: Option<String>,
     pub messages: Vec<Value>,
 }
 
@@ -157,7 +157,7 @@ pub async fn pi_project_tree_refresh(
         }
     }
 
-    build_tree(&conn, state.active_binding())
+    build_tree(&conn, state.bound_binding())
 }
 
 #[tauri::command]
@@ -287,7 +287,7 @@ pub async fn pi_session_index_remove(
 ) -> Result<Vec<PiProjectNodeDto>, String> {
     let (_layout, conn) = open_layout_and_db()?;
     db::remove_pi_session_index(&conn, session_id.trim()).map_err(|e| e.to_string())?;
-    build_tree(&conn, state.active_binding())
+    build_tree(&conn, state.bound_binding())
 }
 
 #[tauri::command]
@@ -302,7 +302,7 @@ pub async fn pi_session_archive(
         .map_err(|e| e.to_string())?;
     let (_layout, conn) = open_layout_and_db()?;
     db::set_pi_session_archived(&conn, session_id, archived).map_err(|e| e.to_string())?;
-    build_tree(&conn, state.active_binding())
+    build_tree(&conn, state.bound_binding())
 }
 
 fn open_err(err: PiOpenError) -> String {
@@ -337,29 +337,34 @@ fn build_tree(
     active: Option<crate::pi_runtime::PiActiveBinding>,
 ) -> Result<Vec<PiProjectNodeDto>, String> {
     let recent = db::list_recent_projects(conn).map_err(|e| e.to_string())?;
-    let indexed = db::list_pi_session_index_visible(conn).map_err(|e| e.to_string())?;
+    let indexed = db::list_pi_session_index_all(conn).map_err(|e| e.to_string())?;
     let mut groups: BTreeMap<String, PiProjectNodeDto> = BTreeMap::new();
 
-    for rec in recent {
-        groups.entry(rec.path.clone()).or_insert(PiProjectNodeDto {
-            path: rec.path.clone(),
-            display_name: rec.display_name,
+    fn empty_node(path: String, display_name: String) -> PiProjectNodeDto {
+        PiProjectNodeDto {
+            path,
+            display_name,
             sessions: Vec::new(),
-        });
+            archived_sessions: Vec::new(),
+        }
+    }
+
+    for rec in recent {
+        groups
+            .entry(rec.path.clone())
+            .or_insert_with(|| empty_node(rec.path.clone(), rec.display_name.clone()));
     }
     for rec in indexed {
         let node = groups
             .entry(rec.project_path.clone())
-            .or_insert_with(|| PiProjectNodeDto {
-                path: rec.project_path.clone(),
-                display_name: display_name_for(&rec.project_path),
-                sessions: Vec::new(),
+            .or_insert_with(|| {
+                empty_node(rec.project_path.clone(), display_name_for(&rec.project_path))
             });
         let is_active = active.as_ref().is_some_and(|b| {
             b.session_id == rec.session_id
                 && project_paths_equal(&b.project_path, Path::new(&rec.project_path))
         });
-        node.sessions.push(PiSessionSummaryDto {
+        let summary = PiSessionSummaryDto {
             session_id: rec.session_id,
             name: rec.session_name,
             created_at: rec.created_at,
@@ -367,11 +372,18 @@ fn build_tree(
             message_count: rec.message_count.max(0) as u64,
             availability: rec.availability,
             is_active,
-        });
+        };
+        if rec.archived {
+            node.archived_sessions.push(summary);
+        } else {
+            node.sessions.push(summary);
+        }
     }
     let mut out: Vec<PiProjectNodeDto> = groups.into_values().collect();
     for node in &mut out {
         node.sessions
+            .sort_by(|a, b| b.modified_at.cmp(&a.modified_at));
+        node.archived_sessions
             .sort_by(|a, b| b.modified_at.cmp(&a.modified_at));
     }
     out.sort_by(|a, b| {
@@ -458,7 +470,8 @@ fn dto_from_snapshot(snap: &PiActiveSnapshot) -> Result<PiActiveSessionDto, Stri
             .and_then(Value::as_u64)
             .unwrap_or(snap.messages.len() as u64),
         context_usage: snap.stats.get("contextUsage").cloned(),
-        permission_summary: PERMISSION_SUMMARY.into(),
+        // Pi 0.84.2 has no permission-query RPC; do not invent a product model.
+        permission_summary: None,
         messages: snap.messages.clone(),
     })
 }
@@ -604,39 +617,10 @@ pub(crate) fn pi_event_sink(app: tauri::AppHandle) -> PiEventSink {
 }
 
 #[tauri::command]
-pub fn pi_session_status(state: tauri::State<PiRuntimeManager>) -> Result<bool, String> {
-    Ok(state.active_binding().is_some())
-}
-
-#[tauri::command]
 pub async fn pi_get_available_models(
     state: tauri::State<'_, PiRuntimeManager>,
 ) -> Result<Vec<serde_json::Value>, String> {
     state.get_available_models()
-}
-
-#[tauri::command]
-pub async fn pi_set_model(
-    state: tauri::State<'_, PiRuntimeManager>,
-    provider: String,
-    model_id: String,
-) -> Result<serde_json::Value, String> {
-    let snap = state.set_model(&provider, &model_id)?;
-    Ok(snap.state)
-}
-
-#[tauri::command]
-pub async fn pi_get_state(
-    state: tauri::State<'_, PiRuntimeManager>,
-) -> Result<serde_json::Value, String> {
-    state.get_state()
-}
-
-#[tauri::command]
-pub fn pi_session_observation(
-    state: tauri::State<PiRuntimeManager>,
-) -> Result<serde_json::Value, String> {
-    state.observation_json()
 }
 
 #[cfg(test)]

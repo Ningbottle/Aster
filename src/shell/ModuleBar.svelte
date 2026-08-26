@@ -10,17 +10,23 @@
   } from "../platform/runtimeStatus";
   import {
     clampSidebarWidth,
+    clampSkillsSidebarWidth,
     isEditableTarget,
     isSidebarVisible,
     loadPiSidebarHidden,
     loadPiSidebarWidth,
     loadSkillsSidebarHidden,
+    loadSkillsSidebarWidth,
     PI_SIDEBAR_DEFAULT,
     PI_SIDEBAR_MAX,
     PI_SIDEBAR_MIN,
     savePiSidebarHidden,
     savePiSidebarWidth,
     saveSkillsSidebarHidden,
+    saveSkillsSidebarWidth,
+    SKILLS_SIDEBAR_DEFAULT,
+    SKILLS_SIDEBAR_MAX,
+    SKILLS_SIDEBAR_MIN,
   } from "./sidebarPreferences";
 
   export let activeView: ViewId = "pi";
@@ -31,32 +37,21 @@
   export let onSelectTool: (tool: string) => void;
   export let onProjectChange: (() => Promise<void>) | undefined = undefined;
 
-  let sideWidths = { full: 248, slim: 176 };
   let isDragging = false;
   let sidebarEl: HTMLElement;
   let piWidth = PI_SIDEBAR_DEFAULT;
+  let skillsWidth = SKILLS_SIDEBAR_DEFAULT;
   let piHidden = false;
   let skillsHidden = false;
 
   $: isSkills = activeView === "skills";
   $: isPi = activeView === "pi";
   $: noSidebar = !isSidebarVisible(activeView, piHidden, skillsHidden);
-  $: currentWidth = isPi ? piWidth : isSkills ? sideWidths.slim : sideWidths.full;
+  $: currentWidth = isPi ? piWidth : skillsWidth;
 
   onMount(() => {
-    try {
-      const rawW = localStorage.getItem("aster.sideWidths");
-      if (rawW) {
-        const pw = JSON.parse(rawW);
-        if (pw && typeof pw === "object") {
-          if (pw.full) sideWidths.full = pw.full;
-          if (pw.slim) sideWidths.slim = pw.slim;
-        }
-      }
-    } catch (e) {
-      console.debug("Failed to read stored sideWidths:", e);
-    }
     piWidth = loadPiSidebarWidth();
+    skillsWidth = loadSkillsSidebarWidth();
     piHidden = loadPiSidebarHidden();
     skillsHidden = loadSkillsSidebarHidden();
     if (isPi) {
@@ -71,16 +66,15 @@
     isDragging = true;
     const startX = e.clientX;
     const startW = currentWidth;
-    const min = isPi ? PI_SIDEBAR_MIN : isSkills ? 140 : 200;
-    const max = isPi ? PI_SIDEBAR_MAX : isSkills ? 300 : 420;
-    const mode = isSkills ? "slim" : "full";
+    const min = isPi ? PI_SIDEBAR_MIN : SKILLS_SIDEBAR_MIN;
+    const max = isPi ? PI_SIDEBAR_MAX : SKILLS_SIDEBAR_MAX;
 
     function onMove(ev: PointerEvent) {
       const w = Math.min(max, Math.max(min, startW + ev.clientX - startX));
       if (isPi) {
         piWidth = clampSidebarWidth(w);
       } else {
-        sideWidths[mode] = Math.round(w);
+        skillsWidth = clampSkillsSidebarWidth(w);
       }
     }
 
@@ -91,11 +85,7 @@
       if (isPi) {
         piWidth = savePiSidebarWidth(piWidth);
       } else {
-        try {
-          localStorage.setItem("aster.sideWidths", JSON.stringify(sideWidths));
-        } catch (err) {
-          console.debug("Failed to save sideWidths:", err);
-        }
+        skillsWidth = saveSkillsSidebarWidth(skillsWidth);
       }
     }
 
@@ -108,14 +98,14 @@
       piWidth = savePiSidebarWidth(piWidth + delta);
       return;
     }
-    const mode = isSkills ? "slim" : "full";
-    const min = isSkills ? 140 : 200;
-    const max = isSkills ? 300 : 420;
-    sideWidths[mode] = Math.min(max, Math.max(min, sideWidths[mode] + delta));
-    try {
-      localStorage.setItem("aster.sideWidths", JSON.stringify(sideWidths));
-    } catch (err) {
-      console.debug("Failed to save sideWidths:", err);
+    skillsWidth = saveSkillsSidebarWidth(skillsWidth + delta);
+  }
+
+  function restoreSidebar() {
+    if (isPi) {
+      piHidden = savePiSidebarHidden(false);
+    } else if (isSkills) {
+      skillsHidden = saveSkillsSidebarHidden(false);
     }
   }
 
@@ -176,6 +166,8 @@
           archiveSession={(id, archived) =>
             piConsoleStore.archiveSession(id, archived)
           }
+          removeProject={(path) => piConsoleStore.removeProject(path)}
+          activeProjectPath={$piConsoleStore.active?.projectPath ?? null}
         />
       {:else if isSkills}
         <div id="side-tools">
@@ -225,6 +217,16 @@
       }
     }}
   ></button>
+{:else if isPi || isSkills}
+  <button
+    type="button"
+    class="sidebar-restore"
+    aria-label="显示侧栏"
+    title="显示侧栏（Ctrl+B）"
+    on:click={restoreSidebar}
+  >
+    显示侧栏
+  </button>
 {/if}
 
 <style>
@@ -329,5 +331,23 @@
   .side-resize.dragging::after,
   .side-resize:focus-visible::after {
     background: var(--faint);
+  }
+  .sidebar-restore {
+    flex: none;
+    width: 28px;
+    min-height: 0;
+    writing-mode: vertical-rl;
+    transform: rotate(180deg);
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    color: var(--muted);
+    background: var(--surface-2);
+    border-right: 1px solid var(--border);
+    padding: 10px 4px;
+    cursor: pointer;
+  }
+  .sidebar-restore:hover {
+    color: var(--fg);
+    background: var(--border);
   }
 </style>

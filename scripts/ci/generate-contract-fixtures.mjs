@@ -92,12 +92,6 @@ const contractSamples = {
       },
     ],
   },
-  PiSetModelArgs: {
-    modelId: "claude-3-5-sonnet-20241022",
-  },
-  PiPromptArgs: {
-    prompt: "Hello Pi, please summarize our current tasks.",
-  },
   PiSessionCreateArgs: {
     projectPath: "C:\\Workspace\\project-a",
   },
@@ -140,7 +134,7 @@ const contractSamples = {
     isCompacting: false,
     messageCount: 2,
     contextUsage: { tokens: 20, contextWindow: 1000, percent: 2 },
-    permissionSummary: "windows_user",
+    permissionSummary: null,
     messages: [{ role: "user", content: "fixture user message" }],
   },
   PiProjectNodeDto_sample: {
@@ -157,6 +151,7 @@ const contractSamples = {
         isActive: true,
       },
     ],
+    archivedSessions: [],
   },
   PiEventEnvelopeDto_sample: {
     runtimeInstanceId: 9,

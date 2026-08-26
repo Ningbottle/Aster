@@ -55,7 +55,8 @@ export function piLifecycleLabel(sessionStatus: string, lifecycle: string | null
   if (sessionStatus === "starting" || lifecycle === "starting") return "Starting";
   if (sessionStatus === "streaming" || lifecycle === "busy") return "Running";
   if (sessionStatus === "compacting") return "Compacting";
-  if (sessionStatus === "error" || lifecycle === "crashed") return "Error";
+  if (sessionStatus === "crashed" || lifecycle === "crashed") return "Crashed";
+  if (sessionStatus === "error") return "Error";
   if (lifecycle === "stopping") return "Stopping";
   if (lifecycle === "needsSetup") return "Needs setup";
   if (lifecycle === "unknown") return "Unknown";

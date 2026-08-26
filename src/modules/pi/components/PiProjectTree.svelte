@@ -9,6 +9,8 @@
   export let openSession: (projectPath: string, sessionId: string) => Promise<void>;
   export let removeFromIndex: (sessionId: string) => Promise<void>;
   export let archiveSession: (sessionId: string, archived: boolean) => Promise<void>;
+  export let removeProject: (projectPath: string) => Promise<void>;
+  export let activeProjectPath: string | null = null;
 
   async function run(action: () => Promise<void>) {
     try {
@@ -25,6 +27,31 @@
     if (next.has(path)) next.delete(path);
     else next.add(path);
     expanded = next;
+  }
+
+  $: ensureRequiredExpanded(projects, activeProjectPath);
+
+  function ensureRequiredExpanded(
+    nodes: PiProjectNode[],
+    activePath: string | null,
+  ) {
+    const required = new Set<string>();
+    if (activePath) required.add(activePath);
+    if (nodes.length === 1) required.add(nodes[0].path);
+    for (const node of nodes) {
+      if (node.sessions.some((session) => session.isActive)) {
+        required.add(node.path);
+      }
+    }
+    let changed = false;
+    const next = new Set(expanded);
+    for (const path of required) {
+      if (!next.has(path)) {
+        next.add(path);
+        changed = true;
+      }
+    }
+    if (changed) expanded = next;
   }
 
   function formatUnnamedSession(iso: string): string {
@@ -91,6 +118,17 @@
           aria-label={`在 ${project.displayName} 中新建会话`}
           on:click={() => run(() => createSession(project.path))}
         >+</button>
+        <button
+          type="button"
+          class="forget"
+          disabled={project.sessions.some((session) => session.isActive)}
+          title={project.sessions.some((session) => session.isActive)
+            ? "活动 Session 占用此项目，先停止 Session 再移除"
+            : "从最近项目列表移除"}
+          on:click={() => run(() => removeProject(project.path))}
+        >
+          移除
+        </button>
       </div>
 
       {#if expanded.has(project.path)}
@@ -124,7 +162,10 @@
                 <button
                   type="button"
                   class="forget"
-                  title="归档后从项目树隐藏，原会话文件不变"
+                  disabled={session.isActive}
+                  title={session.isActive
+                    ? "活动 Session 不能归档，请先停止 Session"
+                    : "归档后从项目树隐藏，原会话文件不变"}
                   on:click={() => run(() => archiveSession(session.sessionId, true))}
                 >
                   归档
@@ -132,8 +173,26 @@
               {/if}
             </li>
           {/each}
-          {#if project.sessions.length === 0}
+          {#if project.sessions.length === 0 && !(project.archivedSessions && project.archivedSessions.length)}
             <li class="empty">此项目还没有已索引的 Pi 会话</li>
+          {/if}
+          {#if project.archivedSessions && project.archivedSessions.length}
+            <li class="empty">已归档</li>
+            {#each project.archivedSessions as archived (archived.sessionId)}
+              <li>
+                <span class="session-name archived-name">
+                  {archived.name || formatUnnamedSession(archived.modifiedAt)}
+                </span>
+                <button
+                  type="button"
+                  class="forget"
+                  title="取消归档后重新显示在项目树中，原会话文件不变"
+                  on:click={() => run(() => archiveSession(archived.sessionId, false))}
+                >
+                  取消归档
+                </button>
+              </li>
+            {/each}
           {/if}
         </ul>
       {/if}
@@ -265,7 +324,20 @@
     color: var(--muted);
     padding: 2px 8px;
   }
-  .forget:hover {
+  .forget:hover:not(:disabled) {
     color: var(--fg);
+  }
+  .forget:disabled {
+    opacity: 0.45;
+    cursor: default;
+  }
+  .archived-name {
+    display: block;
+    font-size: 12.5px;
+    color: var(--faint);
+    padding: 5px 8px 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 </style>

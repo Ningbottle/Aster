@@ -12,6 +12,7 @@
   $: active = $piConsoleStore.active;
   $: status = $piConsoleStore.sessionStatus;
   $: running = status === "streaming" || status === "compacting";
+  $: crashed = status === "crashed";
   $: canSend = !!active && status === "idle" && !!draft.trim();
   $: needsSetup = !hasPi;
 
@@ -105,7 +106,7 @@
       placeholder={active ? "发送 prompt 到当前 Pi 会话…（Enter 发送，Shift+Enter 换行）" : "先选择或创建一个会话"}
       aria-label="Pi prompt 输入"
       bind:value={draft}
-      disabled={!active || running}
+      disabled={!active || running || crashed}
       on:keydown={(e) => {
         if (e.key === "Enter" && !e.shiftKey) {
           e.preventDefault();

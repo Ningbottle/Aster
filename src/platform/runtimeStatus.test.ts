@@ -87,6 +87,9 @@ describe("hostRuntimeStore", () => {
     expect(piLifecycleLabel("closed", "closed")).toBe("Closed");
     expect(piLifecycleLabel("idle", "ready")).toBe("Ready");
     expect(piLifecycleLabel("idle", "closed")).toBe("Ready");
+    expect(piLifecycleLabel("idle", "crashed")).toBe("Crashed");
+    expect(piLifecycleLabel("crashed", "crashed")).toBe("Crashed");
+    expect(piLifecycleLabel("error", "ready")).toBe("Error");
     expect(piLifecycleLabel("streaming", "busy")).toBe("Running");
     expect(dshLifecycleLabel(null, null)).toBe("Closed");
     expect(dshLifecycleLabel(null, "starting")).toBe("Starting");

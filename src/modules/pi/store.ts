@@ -17,6 +17,7 @@ import {
   rollbackOptimisticUser,
   snapshotMatchesBinding,
   type BindingKey,
+  type LiveTool,
 } from "./sessionReducer";
 
 export type PiTreeStatus = "idle" | "loading" | "ready" | "error";
@@ -26,13 +27,16 @@ export type PiSessionStatus =
   | "idle"
   | "streaming"
   | "compacting"
-  | "error";
+  | "error"
+  | "crashed";
 
 export type PiConsoleState = {
   tree: PiProjectNode[];
   active: PiActiveSession | null;
   messages: PiMessage[];
   streamingText: string;
+  streamingThinking: string;
+  liveTools: LiveTool[];
   treeStatus: PiTreeStatus;
   sessionStatus: PiSessionStatus;
   error: string | null;
@@ -48,6 +52,8 @@ const initial: PiConsoleState = {
   active: null,
   messages: [],
   streamingText: "",
+  streamingThinking: "",
+  liveTools: [],
   treeStatus: "idle",
   sessionStatus: "closed",
   error: null,
@@ -71,6 +77,8 @@ function applySnapshot(current: PiConsoleState, active: PiActiveSession): PiCons
     active,
     messages: messagesFromNative(active.messages as unknown[]),
     streamingText: "",
+    streamingThinking: "",
+    liveTools: [],
     sessionStatus: statusFromActive(active),
     error: null,
     busyOffer: null,
@@ -152,18 +160,7 @@ function createStore() {
       update((s) => applySnapshot(s, active));
       await Promise.all([refreshTree(), loadModels(), refreshRuntime()]);
     } catch (err) {
-      const message = toError(err);
-      if (message === "busy") {
-        update((s) => ({
-          ...s,
-          sessionStatus: statusFromActive(s.active),
-          error: message,
-          busyOffer: { projectPath, sessionId: "" },
-        }));
-        return;
-      }
-      update((s) => ({ ...s, sessionStatus: "error", error: message }));
-      await refreshTree();
+      await failOpen(err, projectPath, "");
     }
   }
 
@@ -174,19 +171,45 @@ function createStore() {
       update((s) => applySnapshot(s, active));
       await Promise.all([refreshTree(), loadModels(), refreshRuntime()]);
     } catch (err) {
-      const message = toError(err);
-      if (message === "busy") {
-        update((s) => ({
-          ...s,
-          sessionStatus: statusFromActive(s.active),
-          error: message,
-          busyOffer: { projectPath, sessionId },
-        }));
-        return;
-      }
-      update((s) => ({ ...s, sessionStatus: "error", error: message }));
-      await refreshTree();
+      await failOpen(err, projectPath, sessionId);
     }
+  }
+
+  async function failOpen(err: unknown, projectPath: string, sessionId: string): Promise<void> {
+    const message = toError(err);
+    if (message === "busy") {
+      update((s) => ({
+        ...s,
+        sessionStatus: statusFromActive(s.active),
+        error: message,
+        busyOffer: { projectPath, sessionId },
+      }));
+      return;
+    }
+    if (isProjectGuardMessage(message)) {
+      offerProjectBlock(projectPath, message);
+      update((s) => ({
+        ...s,
+        sessionStatus:
+          s.runtime?.lifecycle === "crashed" || s.sessionStatus === "crashed"
+            ? "crashed"
+            : statusFromActive(s.active),
+      }));
+      return;
+    }
+    await refreshRuntime();
+    update((s) => ({
+      ...s,
+      sessionStatus: s.runtime?.lifecycle === "crashed" ? "crashed" : "error",
+      error: message,
+    }));
+    await refreshTree();
+  }
+
+  async function recoverSession(): Promise<void> {
+    const current = snapshot();
+    if (!current.active) return;
+    await openSession(current.active.projectPath, current.active.sessionId);
   }
 
   async function setModel(provider: string, modelId: string): Promise<void> {
@@ -229,6 +252,8 @@ function createStore() {
       error: null,
       sessionStatus: "streaming",
       streamingText: "",
+      streamingThinking: "",
+      liveTools: [],
       messages: [...s.messages, { role: "user", content: text }],
     }));
     try {
@@ -336,6 +361,20 @@ function createStore() {
     }
   }
 
+  async function removeProject(path: string): Promise<void> {
+    try {
+      await invoke("project_remove", { path });
+      await refreshTree();
+    } catch (err) {
+      const message = toError(err);
+      if (isProjectGuardMessage(message)) {
+        offerProjectBlock(path, message);
+        return;
+      }
+      update((s) => ({ ...s, error: message }));
+    }
+  }
+
   function reportError(err: unknown): void {
     update((s) => ({ ...s, error: toError(err) }));
   }
@@ -381,10 +420,12 @@ function createStore() {
         active: null,
         messages: [],
         streamingText: "",
+        streamingThinking: "",
+        liveTools: [],
         sessionStatus: "closed",
         availableModels: [],
       }));
-      await refreshRuntime();
+      await Promise.all([refreshRuntime(), refreshTree()]);
     } catch (err) {
       update((s) => ({ ...s, error: toError(err) }));
       throw err;
@@ -393,6 +434,7 @@ function createStore() {
 
   function acceptEvent(event: PiEventEnvelope): void {
     let shouldResync = false;
+    let shouldRefreshRuntime = false;
     update((s) => {
       if (!s.active || event.runtimeInstanceId !== s.active.runtimeInstanceId) {
         return s;
@@ -406,6 +448,8 @@ function createStore() {
           sessionId: s.active.sessionId,
           messages: s.messages,
           streamingText: s.streamingText,
+          streamingThinking: s.streamingThinking,
+          liveTools: s.liveTools,
         },
         event,
       );
@@ -430,16 +474,36 @@ function createStore() {
         }
         shouldResync = true;
       }
+      if (event.eventType === "aster_process_exited") {
+        nextActive.isStreaming = false;
+        nextActive.isCompacting = false;
+        shouldRefreshRuntime = true;
+        return {
+          ...s,
+          active: nextActive,
+          messages: reduced.messages,
+          streamingText: reduced.streamingText,
+          streamingThinking: reduced.streamingThinking,
+          liveTools: reduced.liveTools,
+          sessionStatus: "crashed",
+          error: s.error ?? "Pi 进程已退出，会话未正常结束。",
+        };
+      }
       return {
         ...s,
         active: nextActive,
         messages: reduced.messages,
         streamingText: reduced.streamingText,
+        streamingThinking: reduced.streamingThinking,
+        liveTools: reduced.liveTools,
         sessionStatus: statusFromActive(nextActive),
       };
     });
     if (shouldResync) {
       void resyncFromNative();
+    }
+    if (shouldRefreshRuntime) {
+      void refreshRuntime();
     }
   }
 
@@ -463,6 +527,7 @@ function createStore() {
     prompt,
     abort,
     stop,
+    recoverSession,
     acceptEvent,
     dismissBusy,
     offerProjectBlock,
@@ -474,6 +539,7 @@ function createStore() {
     snapshot,
     removeIndexedSession,
     archiveSession,
+    removeProject,
     reportError,
   };
 }

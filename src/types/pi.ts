@@ -36,6 +36,7 @@ export type PiProjectNode = {
   path: string;
   displayName: string;
   sessions: PiSessionSummary[];
+  archivedSessions?: PiSessionSummary[];
 };
 
 export type PiEventEnvelope = {
@@ -64,7 +65,7 @@ export type PiActiveSession = {
   isCompacting: boolean;
   messageCount: number;
   contextUsage: Record<string, unknown> | null;
-  permissionSummary: "windows_user";
+  permissionSummary: string | null;
   messages: PiMessage[];
 };
 

@@ -202,12 +202,17 @@
     background: var(--surface);
     border-bottom: 1px solid var(--border);
     flex: none;
-    gap: 12px;
+    flex-wrap: wrap;
+    gap: 8px 12px;
+    min-width: 0;
   }
   .dsh-bar-left {
     display: flex;
     align-items: center;
-    gap: 10px;
+    flex-wrap: wrap;
+    gap: 8px 10px;
+    min-width: 0;
+    flex: 1 1 240px;
   }
   .dsh-title {
     font-weight: 600;
@@ -217,7 +222,9 @@
   .dsh-bar-right {
     display: flex;
     align-items: center;
+    flex-wrap: wrap;
     gap: 8px;
+    min-width: 0;
   }
   .dsh-embed {
     flex: 1;

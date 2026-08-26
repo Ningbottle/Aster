@@ -56,7 +56,7 @@ const sidebarState = `
       storedPiHidden: localStorage.getItem('aster.sidebar.pi.hidden'),
       storedPiWidth: localStorage.getItem('aster.sidebar.pi.width'),
       storedSkillsHidden: localStorage.getItem('aster.sidebar.skills.hidden'),
-      storedSideWidths: localStorage.getItem('aster.sideWidths'),
+      storedSkillsWidth: localStorage.getItem('aster.sidebar.skills.width'),
     };
   })()
 `;
@@ -88,7 +88,7 @@ async function main() {
     piHidden: localStorage.getItem('aster.sidebar.pi.hidden'),
     piWidth: localStorage.getItem('aster.sidebar.pi.width'),
     skillsHidden: localStorage.getItem('aster.sidebar.skills.hidden'),
-    sideWidths: localStorage.getItem('aster.sideWidths'),
+    skillsWidth: localStorage.getItem('aster.sidebar.skills.width'),
     activeView: localStorage.getItem('aster.activeView'),
     openTabs: localStorage.getItem('aster.openTabs'),
   }))()`);

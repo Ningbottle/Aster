@@ -18,7 +18,7 @@ use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Stdio};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -322,6 +322,17 @@ pub fn pi_launch_args(options: &PiLaunchOptions) -> Vec<String> {
     args
 }
 
+/// Observed stdout EOF without a preceding stop(). Not a native Pi RPC event.
+pub const ASTER_PROCESS_EXITED: &str = "aster_process_exited";
+
+pub fn aster_process_exited_event() -> SessionEvent {
+    SessionEvent {
+        event_type: ASTER_PROCESS_EXITED.into(),
+        summary: "Pi process exited without stop".into(),
+        raw: serde_json::json!({ "source": "stdout_eof" }),
+    }
+}
+
 /// 一个活跃的 Pi RPC 会话。
 pub struct PiSession {
     child: Child,
@@ -330,6 +341,7 @@ pub struct PiSession {
     observation: Arc<Mutex<SessionObservation>>,
     next_id: Arc<AtomicU64>,
     closed: Arc<Mutex<bool>>,
+    stop_requested: Arc<AtomicBool>,
 }
 
 impl PiSession {
@@ -363,10 +375,12 @@ impl PiSession {
             Arc::new(Mutex::new(HashMap::new()));
         let observation = Arc::new(Mutex::new(SessionObservation::default()));
         let closed = Arc::new(Mutex::new(false));
+        let stop_requested = Arc::new(AtomicBool::new(false));
 
         let reader_pending = Arc::clone(&pending);
         let reader_obs = Arc::clone(&observation);
         let reader_closed = Arc::clone(&closed);
+        let reader_stop_requested = Arc::clone(&stop_requested);
         std::thread::spawn(move || {
             let reader = BufReader::new(stdout);
             for line in reader.lines() {
@@ -402,6 +416,9 @@ impl PiSession {
                 serde_json::json!({ "at": "stdout_eof", "pid": child_pid }),
             );
             *reader_closed.lock().unwrap() = true;
+            if !reader_stop_requested.load(Ordering::SeqCst) {
+                on_event(aster_process_exited_event());
+            }
         });
 
         Ok(Self {
@@ -411,6 +428,7 @@ impl PiSession {
             observation,
             next_id: Arc::new(AtomicU64::new(1)),
             closed,
+            stop_requested,
         })
     }
 
@@ -612,6 +630,7 @@ impl PiSession {
     }
 
     pub fn stop_with_budget(&mut self, wait: Duration) -> std::io::Result<()> {
+        self.stop_requested.store(true, Ordering::SeqCst);
         let pid = self.child.id();
         crate::diag::proc_event("stop_requested", "pi", pid);
         crate::supervisor::kill_process_tree(pid)?;
@@ -688,6 +707,7 @@ fn summarize_event(event_type: &str, raw: &Value) -> String {
         }
         "agent_settled" => "agent settled".to_string(),
         "agent_end" => "agent ended".to_string(),
+        ASTER_PROCESS_EXITED => "Pi process exited without stop".to_string(),
         _ => event_type.to_string(),
     }
 }
@@ -768,6 +788,17 @@ mod tests {
         let obs = observe_fixture("crash.jsonl");
         assert!(!obs.settled, "进程被杀后流终止，不得出现 settled");
         assert!(obs.message_updates > 0, "崩溃前应有部分流式事件");
+    }
+
+    #[test]
+    fn aster_process_exited_is_not_a_native_rpc_event() {
+        let event = aster_process_exited_event();
+        assert_eq!(event.event_type, ASTER_PROCESS_EXITED);
+        assert_eq!(event.raw["source"], "stdout_eof");
+        assert_eq!(
+            summarize_event(&event.event_type, &event.raw),
+            "Pi process exited without stop"
+        );
     }
 
     #[test]

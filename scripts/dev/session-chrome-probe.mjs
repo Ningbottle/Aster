@@ -161,7 +161,6 @@ const PROBE = `(() => {
     }
     const afterQuery = await timed("plugin:window|is_minimized", { label: "main" });
     const afterSnap = await timed("pi_runtime_snapshot", {});
-    const afterStatus = await timed("pi_session_status", {});
     const ui = chromeUi();
     return {
       idleMinQuery: { ok: idleMinQuery.ok, ms: idleMinQuery.ms, value: idleMinQuery.value },
@@ -172,7 +171,6 @@ const PROBE = `(() => {
       open,
       afterQuery: { ok: afterQuery.ok, ms: afterQuery.ms, value: afterQuery.value },
       afterSnap: { ok: afterSnap.ok, ms: afterSnap.ms, lifecycle: afterSnap.value && afterSnap.value.lifecycle },
-      afterStatus: { ok: afterStatus.ok, ms: afterStatus.ms, value: afterStatus.value },
       ui,
     };
   })();

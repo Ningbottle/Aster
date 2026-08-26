@@ -1,15 +1,39 @@
 import { describe, expect, it } from "vitest";
 import {
+  assistantTextFromContent,
+  contextUsageView,
   isIgnorableResyncError,
   messagesFromNative,
   reducePiEvent,
   rollbackOptimisticUser,
   snapshotMatchesBinding,
+  thinkingFromContent,
 } from "./sessionReducer";
+
+function conv(
+  overrides: Partial<{
+    runtimeInstanceId: number;
+    sessionId: string;
+    messages: { role: "user" | "assistant" | "toolResult" | "system"; content: unknown }[];
+    streamingText: string;
+    streamingThinking: string;
+    liveTools: [];
+  }> = {},
+) {
+  return {
+    runtimeInstanceId: 9,
+    sessionId: "active",
+    messages: [],
+    streamingText: "",
+    streamingThinking: "",
+    liveTools: [],
+    ...overrides,
+  };
+}
 
 describe("reducePiEvent", () => {
   it("ignores an event from a previous runtime instance", () => {
-    const state = { runtimeInstanceId: 9, sessionId: "active", messages: [], streamingText: "" };
+    const state = conv();
     const next = reducePiEvent(state, {
       runtimeInstanceId: 8,
       sessionId: "old",
@@ -21,7 +45,7 @@ describe("reducePiEvent", () => {
   });
 
   it("ignores an event from a previous native session on the same instance", () => {
-    const state = { runtimeInstanceId: 9, sessionId: "s-2", messages: [], streamingText: "" };
+    const state = conv({ sessionId: "s-2" });
     const next = reducePiEvent(state, {
       runtimeInstanceId: 9,
       sessionId: "s-1",
@@ -33,12 +57,9 @@ describe("reducePiEvent", () => {
   });
 
   it("preserves restored messages while appending the active stream", () => {
-    const state = {
-      runtimeInstanceId: 9,
-      sessionId: "active",
+    const state = conv({
       messages: [{ role: "user" as const, content: "restored" }],
-      streamingText: "",
-    };
+    });
     const next = reducePiEvent(state, {
       runtimeInstanceId: 9,
       sessionId: "active",
@@ -50,13 +71,27 @@ describe("reducePiEvent", () => {
     expect(next.streamingText).toBe("hello");
   });
 
-  it("does not invent an assistant row on settle", () => {
-    const state = {
-      runtimeInstanceId: 9,
-      sessionId: "active",
+  it("keeps the restored transcript when the process exits", () => {
+    const state = conv({
       messages: [{ role: "user" as const, content: "restored" }],
       streamingText: "partial",
-    };
+    });
+    const next = reducePiEvent(state, {
+      runtimeInstanceId: 9,
+      sessionId: "active",
+      eventType: "aster_process_exited",
+      summary: "Pi process exited without stop",
+      raw: { source: "stdout_eof" },
+    });
+    expect(next.messages).toHaveLength(1);
+    expect(next.streamingText).toBe("partial");
+  });
+
+  it("does not invent an assistant row on settle", () => {
+    const state = conv({
+      messages: [{ role: "user" as const, content: "restored" }],
+      streamingText: "partial",
+    });
     const next = reducePiEvent(state, {
       runtimeInstanceId: 9,
       sessionId: "active",
@@ -122,6 +157,92 @@ describe("snapshotMatchesBinding", () => {
     expect(
       snapshotMatchesBinding(key, key, { ...key, messageCount: 2 }),
     ).toBe(false);
+  });
+});
+
+describe("thinking and tool stream events", () => {
+  it("keeps thinking deltas out of the assistant text stream", () => {
+    const withThinking = reducePiEvent(conv(), {
+      runtimeInstanceId: 9,
+      sessionId: "active",
+      eventType: "message_update",
+      summary: "",
+      raw: { assistantMessageEvent: { type: "thinking_delta", delta: "plan" } },
+    });
+    expect(withThinking.streamingThinking).toBe("plan");
+    expect(withThinking.streamingText).toBe("");
+    const withText = reducePiEvent(withThinking, {
+      runtimeInstanceId: 9,
+      sessionId: "active",
+      eventType: "message_update",
+      summary: "",
+      raw: { assistantMessageEvent: { type: "text_delta", delta: "DONE" } },
+    });
+    expect(withText.streamingThinking).toBe("plan");
+    expect(withText.streamingText).toBe("DONE");
+  });
+
+  it("records live tool start/update/end from native execution events", () => {
+    const started = reducePiEvent(conv(), {
+      runtimeInstanceId: 9,
+      sessionId: "active",
+      eventType: "tool_execution_start",
+      summary: "",
+      raw: { toolCallId: "call-1", toolName: "bash", args: { command: "echo hi" } },
+    });
+    expect(started.liveTools).toEqual([
+      {
+        id: "call-1",
+        name: "bash",
+        args: JSON.stringify({ command: "echo hi" }, null, 2),
+        result: "",
+        isError: false,
+        status: "running",
+      },
+    ]);
+    const ended = reducePiEvent(started, {
+      runtimeInstanceId: 9,
+      sessionId: "active",
+      eventType: "tool_execution_end",
+      summary: "",
+      raw: {
+        toolCallId: "call-1",
+        toolName: "bash",
+        result: { content: [{ type: "text", text: "hi\n" }] },
+        isError: false,
+      },
+    });
+    expect(ended.liveTools[0]?.status).toBe("done");
+    expect(ended.liveTools[0]?.result).toBe("hi\n");
+    expect(ended.liveTools[0]?.isError).toBe(false);
+  });
+
+  it("does not invent tool rows when the event has no toolCallId", () => {
+    const next = reducePiEvent(conv(), {
+      runtimeInstanceId: 9,
+      sessionId: "active",
+      eventType: "tool_execution_start",
+      summary: "",
+      raw: { toolName: "bash" },
+    });
+    expect(next.liveTools).toEqual([]);
+  });
+});
+
+describe("content splitting", () => {
+  it("separates thinking blocks from assistant text", () => {
+    const content = [
+      { type: "thinking", thinking: "plan first" },
+      { type: "text", text: "DONE" },
+    ];
+    expect(thinkingFromContent(content)).toBe("plan first");
+    expect(assistantTextFromContent(content)).toBe("DONE");
+  });
+
+  it("treats missing context stats as unknown", () => {
+    expect(contextUsageView(null).kind).toBe("unknown");
+    expect(contextUsageView({}).kind).toBe("unknown");
+    expect(contextUsageView({ percent: 12 })).toEqual({ kind: "percent", percent: 12 });
   });
 });
 

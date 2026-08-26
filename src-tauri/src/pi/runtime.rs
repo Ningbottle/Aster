@@ -342,6 +342,7 @@ impl PiRuntimeManager {
         if !project_path.is_dir() {
             return Err(PiOpenError::ProjectMissing);
         }
+        self.refuse_other_project_if_crashed(project_path)?;
         if self.same_project_idle(project_path)? {
             return self.new_session_on_active();
         }
@@ -365,6 +366,7 @@ impl PiRuntimeManager {
         if !session_path.is_file() {
             return Err(PiOpenError::SessionMissing);
         }
+        self.refuse_other_project_if_crashed(project_path)?;
         if self.is_already_open(project_path, session_path)? {
             return self.snapshot_active();
         }
@@ -395,17 +397,25 @@ impl PiRuntimeManager {
     }
 
     pub fn stop(&self) -> Result<(), String> {
-        let (instance_id, session) = {
+        let (instance_id, session, already_closed) = {
             let guard = crate::diag::lock_wait("pi.runtime.active(stop)", &self.active)
                 .map_err(|e| format!("runtime lock failed: {e}"))?;
             match guard.as_ref() {
                 None => return Ok(()),
-                Some(active) => (active.instance_id, Arc::clone(&active.session)),
+                Some(active) => (
+                    active.instance_id,
+                    Arc::clone(&active.session),
+                    active.session.is_closed(),
+                ),
             }
         };
-        session
-            .stop()
-            .map_err(|e| format!("未能停止 Pi Session: {e}"))?;
+        // Process already gone: releasing the slot is the remaining work. Do not
+        // call kill and pretend a timeout is a failed stop of a live child.
+        if !already_closed {
+            session
+                .stop()
+                .map_err(|e| format!("未能停止 Pi Session: {e}"))?;
+        }
         let mut guard = crate::diag::lock_wait("pi.runtime.active(stop.clear)", &self.active)
             .map_err(|e| format!("runtime lock failed: {e}"))?;
         if guard.as_ref().map(|a| a.instance_id) == Some(instance_id) {
@@ -475,17 +485,38 @@ impl PiRuntimeManager {
         Ok(Arc::clone(&active.session))
     }
 
+    /// A crashed slot still binds its project. Opening/creating on another
+    /// project would take the slot via restart and silently drop M0 protection.
+    fn refuse_other_project_if_crashed(&self, project_path: &Path) -> Result<(), PiOpenError> {
+        let guard = self
+            .active
+            .lock()
+            .map_err(|e| PiOpenError::RpcFailed(format!("runtime lock failed: {e}")))?;
+        let Some(active) = guard.as_ref() else {
+            return Ok(());
+        };
+        if !active.session.is_closed() {
+            return Ok(());
+        }
+        if project_paths_equal(&active.project_path, project_path) {
+            return Ok(());
+        }
+        Err(PiOpenError::RpcFailed(active_session_blocks_project_change(
+            &binding_of(active),
+        )))
+    }
+
     fn same_project_idle(&self, project_path: &Path) -> Result<bool, PiOpenError> {
         let session = {
-            let mut guard = self
+            let guard = self
                 .active
                 .lock()
                 .map_err(|e| PiOpenError::RpcFailed(format!("runtime lock failed: {e}")))?;
-            let Some(active) = guard.as_mut() else {
+            let Some(active) = guard.as_ref() else {
                 return Ok(false);
             };
             if active.session.is_closed() {
-                *guard = None;
+                // Occupied crashed slot must stay until stop() or same-project restart.
                 return Ok(false);
             }
             let same = project_paths_equal(&active.project_path, project_path);
@@ -649,15 +680,14 @@ impl PiRuntimeManager {
 
     fn snapshot_active(&self) -> Result<PiActiveSnapshot, PiOpenError> {
         let (instance_id, session) = {
-            let mut guard = self
+            let guard = self
                 .active
                 .lock()
                 .map_err(|e| PiOpenError::RpcFailed(format!("runtime lock failed: {e}")))?;
             let active = guard
-                .as_mut()
+                .as_ref()
                 .ok_or(PiOpenError::RpcFailed("no active Pi session".into()))?;
             if active.session.is_closed() {
-                *guard = None;
                 return Err(PiOpenError::RpcFailed("no active Pi session".into()));
             }
             (active.instance_id, Arc::clone(&active.session))
@@ -964,6 +994,10 @@ impl PiProcess for FakePiProcess {
         Ok(())
     }
     fn is_closed(&self) -> bool {
-        self.closed.load(Ordering::SeqCst) || self.ctrl.force_closed.load(Ordering::SeqCst)
+        // Latch onto this process so a later replacement process can be live.
+        if self.ctrl.force_closed.load(Ordering::SeqCst) {
+            self.closed.store(true, Ordering::SeqCst);
+        }
+        self.closed.load(Ordering::SeqCst)
     }
 }
