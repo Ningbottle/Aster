@@ -22,6 +22,13 @@
   $: hasDsh = dshRuntimes.some((r) => r.version === "0.1.0-rc.6");
   $: targetUrl = facts?.url || "http://127.0.0.1:38472";
   $: isRunning = !!facts?.running;
+  $: dshHealthDiagnosis = facts?.healthy
+    ? "健康（boot manifest 已注入）"
+    : facts?.static_ok
+      ? "静态可达，boot 注入未验证"
+      : facts?.runner_alive
+        ? "进程存活，HTTP 未就绪"
+        : "进程未存活";
   $: dshPending = (starting ? "starting" : stopping ? "stopping" : null) as DshPending;
   $: dshLifecycle = dshLifecycleLabel(facts, dshPending);
 
@@ -87,25 +94,38 @@
     <div class="dsh-bar-left">
       <span class="dsh-title">DeepSeek Harness</span>
       <span class="tag neutral sm">{dshLifecycle}</span>
-      {#if isRunning}
-        <span class="tag ok">
-          <span class="status-dot run"></span>
-          运行中 · {facts?.url}{facts?.pid ? ` (PID: ${facts.pid})` : ""}
-        </span>
-        <span class="tag neutral sm">原生 Web UI ({facts?.version})</span>
-        {#if facts?.healthy}
-          <span class="tag ok sm">健康（boot manifest 已注入）</span>
-        {:else if facts?.static_ok}
-          <span class="tag neutral sm">静态可达，boot 注入未验证</span>
-        {:else}
-          <span class="tag neutral sm">进程存活，HTTP 未就绪</span>
-        {/if}
-      {:else}
-        <span class="tag neutral">已停止</span>
-      {/if}
     </div>
 
     <div class="dsh-bar-right">
+      {#if facts}
+        <details class="dsh-details">
+          <summary class="btn sm">详情</summary>
+          <div class="dsh-details-panel" role="group" aria-label="DSH 运行详情">
+            <dl>
+              <div>
+                <dt>地址</dt>
+                <dd>{facts.url}</dd>
+              </div>
+              <div>
+                <dt>版本</dt>
+                <dd>{facts.version}</dd>
+              </div>
+              <div>
+                <dt>PID</dt>
+                <dd>{facts.pid ?? "不可用"}</dd>
+              </div>
+              <div>
+                <dt>Boot Probe</dt>
+                <dd>{facts.boot_ok ? "通过" : "未通过"}</dd>
+              </div>
+              <div>
+                <dt>健康诊断</dt>
+                <dd>{dshHealthDiagnosis}</dd>
+              </div>
+            </dl>
+          </div>
+        </details>
+      {/if}
       {#if isRunning}
         <button type="button" class="btn sm" on:click={reloadIframe} title="重新加载网页">
           <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M2.5 8a5.5 5.5 0 101.6-3.9L2 6.5M2 2.5v4h4" /></svg>
@@ -131,6 +151,10 @@
     </div>
   </div>
 
+  {#if errorMsg}
+    <div class="dsh-error" role="alert">{errorMsg}</div>
+  {/if}
+
   <div class="dsh-embed">
     {#if isRunning}
       {#key iframeKey}
@@ -151,10 +175,6 @@
             <br><span class="faint" style="font-size: 11.5px;">未检测到 DSH 0.1.0-rc.6 运行时。</span>
           {/if}
         </p>
-
-        {#if errorMsg}
-          <div class="tag err" style="margin-top: 8px; max-width: 600px; word-break: break-word;">{errorMsg}</div>
-        {/if}
 
         {#if installMsg}
           <div class="tag info" style="margin-top: 8px;">{installMsg}</div>
@@ -198,6 +218,7 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
+    position: relative;
     padding: 8px 20px;
     background: var(--surface);
     border-bottom: 1px solid var(--border);
@@ -225,6 +246,60 @@
     flex-wrap: wrap;
     gap: 8px;
     min-width: 0;
+  }
+  .dsh-details {
+    position: relative;
+    flex: none;
+  }
+  .dsh-details summary {
+    list-style: none;
+    cursor: pointer;
+  }
+  .dsh-details summary::-webkit-details-marker {
+    display: none;
+  }
+  .dsh-details-panel {
+    position: absolute;
+    top: calc(100% + 6px);
+    right: 0;
+    z-index: 5;
+    width: min(420px, calc(100vw - 40px));
+    padding: 12px 14px;
+    border: 1px solid var(--border);
+    border-radius: var(--r-md);
+    background: var(--surface);
+    box-shadow: var(--shadow-2);
+  }
+  .dsh-details-panel dl {
+    display: grid;
+    gap: 8px;
+    margin: 0;
+  }
+  .dsh-details-panel dl > div {
+    display: grid;
+    grid-template-columns: 92px minmax(0, 1fr);
+    gap: 10px;
+    align-items: baseline;
+  }
+  .dsh-details-panel dt {
+    color: var(--muted);
+    font-size: 11px;
+  }
+  .dsh-details-panel dd {
+    min-width: 0;
+    margin: 0;
+    color: var(--fg);
+    font-family: var(--font-mono);
+    font-size: 11px;
+    overflow-wrap: anywhere;
+  }
+  .dsh-error {
+    padding: 6px 20px;
+    border-bottom: 1px solid var(--border);
+    color: var(--danger);
+    background: var(--surface);
+    font-size: 12px;
+    overflow-wrap: anywhere;
   }
   .dsh-embed {
     flex: 1;
@@ -263,16 +338,6 @@
     color: var(--muted);
     max-width: 480px;
     line-height: 1.7;
-  }
-  .status-dot {
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
-    display: inline-block;
-    margin-right: 4px;
-  }
-  .status-dot.run {
-    background: var(--success);
   }
 </style>
 
