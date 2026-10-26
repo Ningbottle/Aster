@@ -1,5 +1,5 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { startFixtureProvider, fixtureModelsJson } from '../fixtures/fixture-provider.mjs';
@@ -70,7 +70,8 @@ export function walkFiles(directory: string, found: string[] = []): string[] {
 }
 
 export async function createHostFixture(): Promise<HostFixture> {
-  const root = mkdtempSync(join(tmpdir(), 'aster-host-'));
+  // Windows TEMP may use an 8.3 alias while Git/Pi return the long directory name.
+  const root = realpathSync.native(mkdtempSync(join(tmpdir(), 'aster-host-')));
   const repo = join(root, 'repo');
   const dataDir = join(root, 'data');
   const piDir = join(root, 'pi');
