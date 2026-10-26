@@ -1,0 +1,26 @@
+/* Independent SVG adaptation of the shipped usage-ring hover declarations.
+   Claude 3.6556.2.0 c403c4b83-yqAXiELG.css: scale 1.08, glow .23;
+   shared CDS tokens: 60ms / cubic-bezier(.165,.84,.44,1). Static evidence only. */
+.context-ring { overflow: visible; }
+.context-ring-hover {
+  transform-origin: 18px 18px;
+  transition: transform 60ms cubic-bezier(.165,.84,.44,1);
+}
+.context-ring-glow {
+  opacity: 0;
+  filter: blur(2px);
+  transition: opacity 60ms cubic-bezier(.165,.84,.44,1);
+}
+@media (hover: hover) {
+  .composer-usage:hover .context-ring-hover { transform: scale(1.08); }
+  .composer-usage:hover .context-ring-glow { opacity: .23; }
+}
+.composer-usage:focus-visible .context-ring-hover { transform: scale(1.08); }
+.composer-usage:focus-visible .context-ring-glow { opacity: .23; }
+@media (prefers-reduced-motion: reduce) {
+  .context-ring-hover, .context-ring-glow { transition: none !important; }
+  .composer-usage:is(:hover, :focus-visible) .context-ring-hover { transform: none; }
+}
+html[data-reduce-motion="true"] .context-ring-hover,
+html[data-reduce-motion="true"] .context-ring-glow { transition: none !important; }
+html[data-reduce-motion="true"] .composer-usage:is(:hover, :focus-visible) .context-ring-hover { transform: none; }

@@ -5,7 +5,6 @@ import { fileURLToPath } from "url";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const rootDir = path.resolve(__dirname, "../..");
 const srcDir = path.resolve(rootDir, "src");
-const tauriSrcDir = path.resolve(rootDir, "src-tauri/src");
 
 // 0. 自检测试模式
 if (process.argv.includes("--selftest")) {
@@ -68,10 +67,9 @@ function getAllFiles(dir, exts) {
   return results;
 }
 
-const frontendFiles = getAllFiles(srcDir, [".svelte", ".ts", ".js"]);
-const backendFiles = getAllFiles(tauriSrcDir, [".rs"]);
+const frontendFiles = getAllFiles(srcDir, [".svelte", ".ts", ".tsx", ".js"]);
 
-console.log(`[CI Gate] Scanning ${frontendFiles.length} frontend files and ${backendFiles.length} backend files for fake data, constant true hacks, and empty catch blocks...`);
+console.log(`[CI Gate] Scanning ${frontendFiles.length} frontend files for fake data, constant true hacks, and empty catch blocks...`);
 
 // 1. Fake data literal patterns across frontend & backend
 const fakeDataPatterns = [
@@ -86,7 +84,7 @@ const fakeDataPatterns = [
 ];
 
 for (const pattern of fakeDataPatterns) {
-  for (const file of [...frontendFiles, ...backendFiles]) {
+  for (const file of frontendFiles) {
     const content = fs.readFileSync(file, "utf8");
     if (content.includes(pattern)) {
       console.error(`[FAIL] Hardcoded fake data pattern found: '${pattern}' in ${path.relative(rootDir, file)}`);
@@ -121,7 +119,7 @@ for (const file of frontendFiles) {
 }
 
 if (failures === 0) {
-  console.log(`[OK] CI Gate Passed: Zero fake data patterns, zero constant true hacks, zero empty catch blocks across ${frontendFiles.length + backendFiles.length} files.`);
+  console.log(`[OK] CI Gate Passed: Zero fake data patterns, zero constant true hacks, zero empty catch blocks across ${frontendFiles.length} files.`);
   process.exit(0);
 } else {
   console.error(`[ERROR] CI Gate Failed with ${failures} violation(s).`);

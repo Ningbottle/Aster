@@ -1,0 +1,48 @@
+.usage-panel {
+  width: min(480px, calc(100% - 10px)); margin-left: 10px; padding: 8px 12px 10px;
+  flex: none; border-radius: 10px; background: var(--hover); color: var(--text-1);
+  font: 12px/1.4 var(--ui-font);
+}
+.usage-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 24px; margin-bottom: 16px; }
+.usage-tabs, .usage-ranges { display: flex; align-items: center; gap: 3px; }
+.usage-tabs button, .usage-ranges button { height: 22px; padding: 0 7px; border-radius: 4px; color: var(--text-3); font-size: 13px; cursor: pointer; }
+.usage-tabs button[aria-selected="true"], .usage-ranges button[aria-pressed="true"] { background: var(--pressed); color: var(--text-1); }
+.usage-tabs button:hover, .usage-ranges button:hover { color: var(--text-1); }
+.usage-content { min-width: 0; outline: none; }
+.usage-metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; }
+.usage-metric { min-width: 0; height: 44px; padding: 4px; display: flex; flex-direction: column; justify-content: center; gap: 1px; border-radius: 4px; background: var(--pressed); }
+.usage-metric span { overflow: hidden; color: var(--text-3); font-size: 12px; line-height: 16px; white-space: nowrap; text-overflow: ellipsis; }
+.usage-metric strong { overflow: hidden; color: var(--text-1); font-size: 14px; font-weight: 600; line-height: 18px; white-space: nowrap; text-overflow: ellipsis; }
+.usage-heat-section { margin-top: 6px; }
+.usage-heat-scroll { overflow-x: auto; padding-bottom: 2px; }
+.usage-heatmap { min-width: 260px; }
+.usage-weeks { display: grid; grid-auto-flow: column; grid-template-rows: repeat(7, auto); grid-auto-columns: minmax(0, 1fr); gap: 3px; }
+.usage-day { width: 9px; height: 9px; display: block; border-radius: 2px; background: var(--pressed); }
+.usage-day:focus-visible { position: relative; z-index: 1; }
+.usage-weeks .usage-day { width: 100%; height: auto; aspect-ratio: 1; }
+.usage-day.level-1 { background: #a2c4f1; }
+.usage-day.level-2 { background: #86afe9; }
+.usage-day.level-3 { background: #6498df; }
+.usage-day.level-4 { background: #367aca; }
+.usage-day.future { background: var(--line); }
+.usage-day.out-of-range { background: var(--pressed); opacity: .5; }
+.usage-state { min-height: 220px; display: grid; place-content: center; gap: 8px; color: var(--text-3); text-align: center; }
+.usage-state p { margin: 0; }
+.usage-state button { justify-self: center; padding: 5px 11px; border-radius: 5px; background: var(--pressed); color: var(--text-1); cursor: pointer; }
+.usage-state button:hover { background: var(--selected); }
+.usage-error { color: var(--clay); }
+.usage-inline-loading { padding: 5px 0; color: var(--text-3); font-size: 11px; }
+.usage-footer { margin-top: 6px; color: var(--text-3); font-size: 11px; line-height: 16px; }
+.usage-footer p { margin: 0; }
+.usage-footer .usage-coverage { margin-bottom: 4px; color: var(--clay); }
+.usage-models-wrap { max-width: 100%; overflow-x: auto; }
+.usage-models { width: 100%; border-collapse: collapse; white-space: nowrap; font-size: 12px; }
+.usage-models th, .usage-models td { padding: 7px 6px; border-bottom: 1px solid var(--line-strong); text-align: right; color: var(--text-2); font-weight: 400; }
+.usage-models th:first-child, .usage-models td:first-child { text-align: left; }
+.usage-models thead th { color: var(--text-3); font-size: 11px; font-weight: 500; }
+.usage-models tbody th { max-width: 130px; overflow: hidden; color: var(--text-1); text-overflow: ellipsis; font-weight: 500; }
+.usage-total-note { margin: 8px 6px; color: var(--text-3); font-size: 10px; }
+@media (max-width: 900px) {
+  .home-greeting { font-size: 20px; margin-bottom: 28px; }
+  .usage-panel { width: min(480px, 100%); margin-left: 0; }
+}

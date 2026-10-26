@@ -1,0 +1,28 @@
+.todo-card { min-width: 0; }
+.todo-card > summary { gap: 6px; }
+.todo-count { margin-left: auto; color: var(--text-3); font-size: 11px; font-weight: 400; }
+.todo-refresh { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; margin: -5px -5px -5px 2px; padding: 0; border: 0; border-radius: 6px; color: var(--text-3); background: transparent; cursor: pointer; }
+.todo-refresh:hover:not(:disabled) { color: var(--text-1); background: var(--cds-fill-ghost-hover, rgba(0,0,0,.05)); }
+.todo-refresh:disabled { opacity: .45; cursor: default; }
+.todo-sections { display: grid; gap: 9px; }
+.todo-group { min-width: 0; }
+.todo-group-title { margin: 2px 0 4px; color: var(--text-3); font-size: 10px; font-weight: 500; }
+.todo-list { display: grid; gap: 2px; margin: 0; padding: 0; list-style: none; }
+.todo-row { display: flex; min-width: 0; align-items: flex-start; gap: 7px; padding: 3px 0; color: var(--text-2); font-size: 11px; line-height: 1.4; }
+.todo-check, .todo-status-icon { display: inline-flex; flex: 0 0 16px; align-items: center; justify-content: center; width: 16px; height: 16px; margin-top: 0; padding: 0; border: 0; color: var(--text-3); background: transparent; }
+.todo-check { cursor: pointer; }
+.todo-check:hover:not(:disabled) { color: var(--clay, #c96442); }
+.todo-check:disabled { opacity: .6; cursor: wait; }
+.todo-in_progress .todo-status-icon, .todo-in_progress .todo-check { color: var(--clay, #c96442); }
+.todo-done { color: var(--text-3); }
+.todo-done .todo-status-icon, .todo-done .todo-check { color: var(--green, #728a64); }
+.todo-title { min-width: 0; flex: 1; overflow-wrap: anywhere; }
+.todo-done .todo-title { text-decoration: line-through; text-decoration-color: color-mix(in srgb, var(--text-3) 60%, transparent); }
+.todo-status { flex: 0 0 auto; color: var(--text-3); font-size: 10px; }
+.todo-message, .todo-error { margin: 6px 0 0; color: var(--text-3); font-size: 11px; line-height: 1.45; }
+.todo-error { display: flex; align-items: flex-start; gap: 8px; color: var(--danger, #b74f3a); }
+.todo-error span { min-width: 0; flex: 1; overflow-wrap: anywhere; }
+.todo-error button { flex: 0 0 auto; padding: 0; border: 0; color: inherit; background: none; font: inherit; text-decoration: underline; cursor: pointer; }
+.todo-error button:disabled { opacity: .5; cursor: default; }
+.todo-pending-icon { animation: todo-spin .8s linear infinite; }
+@keyframes todo-spin { to { transform: rotate(360deg); } }

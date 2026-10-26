@@ -16,28 +16,20 @@ jobs:
           node-version: 22
           cache: npm
 
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: stable-x86_64-pc-windows-msvc
-
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: src-tauri
-
-      - name: Rust tests
-        run: cargo test --manifest-path src-tauri/Cargo.toml
-
-      - name: Install frontend dependencies
+      - name: Install dependencies
         run: npm ci
 
-      - name: Frontend unit tests
-        run: npm run test:unit
+      - name: Type check
+        run: npm run check:desktop
 
-      - name: Frontend type check
-        run: npm run check
+      - name: Desktop contract and regression tests
+        run: npm run test:desktop
 
       - name: No-fake-data gate
         run: npm run lint:nofake
 
-      - name: Release build (NSIS installer)
-        run: npm run tauri build
+      - name: Build Electron main/preload/renderer
+        run: npm run build:desktop
+
+      - name: Real ThinkRail/Pi host integration
+        run: npm run test:host

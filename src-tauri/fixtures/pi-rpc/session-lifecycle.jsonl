@@ -1,6 +1,0 @@
-{"id":"aster-1","type":"response","command":"get_state","success":true,"data":{"thinkingLevel":"medium","isStreaming":false,"isCompacting":false,"steeringMode":"all","followUpMode":"all","sessionFile":"C:/fixture/sessions/2026-08-19_session-1.jsonl","sessionId":"session-1","sessionName":"Fixture session","autoCompactionEnabled":true,"messageCount":2,"pendingMessageCount":0,"model":{"id":"fixture-model","name":"Fixture Model","provider":"fixture"}}}
-{"id":"aster-2","type":"response","command":"get_messages","success":true,"data":{"messages":[{"role":"user","content":"fixture user message"},{"role":"assistant","content":[{"type":"text","text":"fixture assistant message"}]}]}}
-{"id":"aster-3","type":"response","command":"get_session_stats","success":true,"data":{"sessionFile":"C:/fixture/sessions/2026-08-19_session-1.jsonl","sessionId":"session-1","userMessages":1,"assistantMessages":1,"toolCalls":0,"toolResults":0,"totalMessages":2,"tokens":{"input":12,"output":8,"cacheRead":0,"cacheWrite":0,"total":20},"cost":0,"contextUsage":{"tokens":20,"contextWindow":1000,"percent":2}}}
-{"id":"aster-4","type":"response","command":"switch_session","success":true,"data":{"cancelled":false}}
-{"id":"aster-5","type":"response","command":"set_thinking_level","success":true}
-{"id":"aster-6","type":"response","command":"set_session_name","success":true}

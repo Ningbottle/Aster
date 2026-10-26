@@ -1,0 +1,28 @@
+{
+	"name": "@thinkrail/shared",
+	"version": "0.0.0",
+	"private": true,
+	"type": "module",
+	"exports": {
+		"./shellEnv": "./src/shellEnv.ts",
+		"./freePort": "./src/freePort.ts",
+		"./startupMark": "./src/startupMark.ts",
+		"./version": "./src/version.ts",
+		"./jbcentral": "./src/jbcentral.ts",
+		"./paths": "./src/paths.ts",
+		"./codedError": "./src/codedError.ts",
+		"./removeTree": "./src/removeTree.ts",
+		"./spawn": "./src/spawn.ts"
+	},
+	"scripts": {
+		"typecheck": "tsc --noEmit",
+		"test": "bun test"
+	},
+	"dependencies": {
+		"@thinkrail/contracts": "workspace:*"
+	},
+	"devDependencies": {
+		"@types/bun": "catalog:",
+		"typescript": "catalog:"
+	}
+}

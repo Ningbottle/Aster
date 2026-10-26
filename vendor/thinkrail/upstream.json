@@ -1,0 +1,37 @@
+{
+  "repository": "https://github.com/JetBrains/thinkrail",
+  "commit": "8fc50b802a8800e104373b927e63bcedb3b6f8fb",
+  "packages": [
+    "@thinkrail/server",
+    "@thinkrail/contracts",
+    "@thinkrail/ext-visualize",
+    "@thinkrail/extension-api",
+    "@thinkrail/locales",
+    "@thinkrail/pi-visualize",
+    "@thinkrail/resource-renderers",
+    "@thinkrail/ui",
+    "@thinkrail/shared",
+    "pi-background-commands",
+    "pi-delegation",
+    "pi-spec-graph",
+    "pi-subagents",
+    "pi-thinkrail-workflow",
+    "pi-todos"
+  ],
+  "excludedDocumentation": [
+    "AGENTS.md",
+    "CLAUDE.md",
+    "SPEC.md",
+    "README.md"
+  ],
+  "modifications": [
+    {
+      "file": "packages/server/src/host/server.ts",
+      "reason": "Reject foreign Host and Origin values on the local Aster host. The separate Aster usage extension is recorded below."
+    },
+    {
+      "files": ["packages/contracts/src/{index,wsProtocol,usage}.ts", "packages/server/src/host/handlers.ts", "packages/server/src/agent/{agentSessionManager,usageStats}.ts"],
+      "reason": "Add the Aster-only read-only usage.getSummary WS contract over native Pi entries in registered workspaces. No parallel conversation store, disk-session attachment, credential reads or telemetry."
+    }
+  ]
+}

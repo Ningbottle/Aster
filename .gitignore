@@ -3,8 +3,7 @@ node_modules/
 
 # Build output
 dist/
-src-tauri/target/
-src-tauri/gen/schemas/
+out/
 
 # Logs and local overrides
 *.log
@@ -26,6 +25,7 @@ scratch/
 *.mdx
 !/README.md
 !/AGENTS.md
+!vendor/thinkrail/**/*.md
 docs/
 docx/
 deep-research-output/
@@ -33,4 +33,3 @@ deep-research-output/
 *.docx
 *.odt
 *.pdf
-aster-workbench.html
