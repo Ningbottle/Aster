@@ -6,6 +6,7 @@ import { CodeWorkspace, ExtensionDialog } from './components';
 import { DesktopShell, SessionSidebar, TitleBar } from './Shell';
 import { SessionDetails } from './SessionDetails';
 import { CdsButton } from './cds/Button';
+import { SplitPane } from './cds/SplitPane';
 import { QuestionDialog } from './QuestionDialog';
 import { openExternal, openFileInWorkspace, openFolder } from './native';
 import { useModalFocus } from './modal-focus';
@@ -14,6 +15,8 @@ export default function App() {
   const client = useMemo(() => new WsClient(), []);
   const { view, busy, replyPending, questionPending, actions } = useDesktopState(client);
   const [showDetails, setShowDetails] = useState(false);
+  /** File the details panel previews; null keeps the panel on session statistics. */
+  const [previewPath, setPreviewPath] = useState<string | null>(null);
   /** Monotonic focus request for the Context card, cleared whenever the panel closes. */
   const [detailsFocus, setDetailsFocus] = useState(0);
   const [sidebarOpen, setSidebarOpen] = useState(true);
@@ -54,6 +57,13 @@ export default function App() {
     const result = await openExternal(url);
     if (!result.ok) actions.reportError(result.error ?? `The link could not be opened: ${url}`);
   }, [actions]);
+
+  /** Local links and Outputs open in the panel; Open inside the panel still hands off to the OS. */
+  const previewFile = useCallback((path: string) => {
+    setShowDetails(true);
+    setDetailsFocus(0);
+    setPreviewPath(path);
+  }, []);
 
   useEffect(() => {
     if (!activeSessionId || !activeWorkspaceId) return;
@@ -99,10 +109,14 @@ export default function App() {
   const closeDetails = useCallback(() => {
     setShowDetails(false);
     setDetailsFocus(0);
+    setPreviewPath(null);
   }, []);
   const toggleDetails = useCallback(() => {
     setDetailsFocus(0);
-    setShowDetails(value => !value);
+    setShowDetails(value => {
+      if (value) setPreviewPath(null);
+      return !value;
+    });
   }, []);
   const openContextDetails = useCallback(() => {
     setShowDetails(true);
@@ -112,8 +126,17 @@ export default function App() {
   return <DesktopShell busy={busy} sidebarOpen={sidebarOpen}>
     <TitleBar view={view} onToggleSidebar={() => setSidebarOpen(value => !value)} onBack={() => void navigateSession(-1)} onForward={() => void navigateSession(1)} canBack={!busy && navigation.index > 0} canForward={!busy && navigation.index < navigation.entries.length - 1} onShowDetails={toggleDetails} onOpenFolder={() => void handleOpenFolder()} detailsOpen={showDetails} onRename={beginRename} onRelease={() => void actions.release()} onSetTrust={(projectId, trusted) => void actions.setProjectTrust(projectId, trusted)} />
     <SessionSidebar view={view} onChooseProject={() => void actions.chooseProject()} onNewSession={projectId => void actions.newSession(projectId)} onOpenSession={session => void openSession({ workspaceId: session.workspaceId, sessionId: session.sessionId })} onRename={beginRename} onShowDetails={toggleDetails} onToggleTerminal={() => setTerminalOpen(value => !value)} terminalOpen={terminalOpen} pending={busy} />
-    <CodeWorkspace view={view} client={client} terminalOpen={terminalOpen} onCloseTerminal={() => setTerminalOpen(false)} onReportError={actions.reportError} onChooseProject={() => void actions.chooseProject()} onSend={(text, images) => actions.send(text, images)} onAbort={() => void actions.abort()} onSetApproval={mode => void actions.setApproval(mode)} onSetModel={model => void actions.setModel(model)} onSetThinking={level => void actions.setThinking(level)} onOpenFile={path => void handleOpenFile(path)} onOpenExternal={url => void handleOpenExternal(url)} onOpenDetails={openContextDetails} pending={busy || view.booting} error={view.error} onDismissError={actions.dismissError} />
-    {showDetails && <SessionDetails view={view} client={client} onClose={closeDetails} onOpenFile={path => void handleOpenFile(path)} onOpenExternal={url => void handleOpenExternal(url)} focusContext={detailsFocus} />}
+    <div className="workspace-body">
+      <SplitPane
+        collapsed={!showDetails}
+        onCollapsedChange={collapsed => {
+          setShowDetails(!collapsed);
+          if (collapsed) setPreviewPath(null);
+        }}
+        leftPane={<CodeWorkspace view={view} client={client} terminalOpen={terminalOpen} onCloseTerminal={() => setTerminalOpen(false)} onReportError={actions.reportError} onChooseProject={() => void actions.chooseProject()} onSend={(text, images) => actions.send(text, images)} onAbort={() => void actions.abort()} onSetApproval={mode => void actions.setApproval(mode)} onSetModel={model => void actions.setModel(model)} onSetThinking={level => void actions.setThinking(level)} onOpenFile={previewFile} onOpenExternal={url => void handleOpenExternal(url)} onOpenDetails={openContextDetails} pending={busy || view.booting} error={view.error} onDismissError={actions.dismissError} />}
+        rightPane={showDetails ? <SessionDetails view={view} client={client} onClose={closeDetails} onOpenFile={path => void handleOpenFile(path)} onOpenExternal={url => void handleOpenExternal(url)} previewPath={previewPath} onPreviewPath={setPreviewPath} focusContext={detailsFocus} /> : null}
+      />
+    </div>
     {pendingInput ? <ExtensionDialog key={pendingInput.request.id} request={pendingInput.request} startup={pendingInput.startup} onReply={value => void actions.reply({ sessionId: pendingInput.request.sessionId, requestId: pendingInput.request.id }, value)} pending={replyPending} error={view.error} />
       : questionTarget && view.pendingQuestion && <QuestionDialog key={questionTarget.toolCallId} args={view.pendingQuestion.args} invalid={view.pendingQuestion.invalid} onReply={result => void actions.answerQuestion(questionTarget, result)} pending={questionPending} error={view.error} />}
     {renameTarget && <RenameSessionDialog draft={renameDraft} pending={busy} onDraft={setRenameDraft} onCancel={() => setRenameTarget(null)} onSave={() => void saveRename()} />}

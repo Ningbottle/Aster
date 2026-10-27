@@ -22,7 +22,10 @@ export async function createWindow(origin: string): Promise<BrowserWindow> {
   window.on('closed', disposeNative);
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   window.webContents.on('will-navigate', event => event.preventDefault());
-  window.webContents.on('will-frame-navigate', event => event.preventDefault());
+  // Main frame navigation stays blocked; preview frames are sandboxed and CSP frame-src caps them.
+  window.webContents.on('will-frame-navigate', event => {
+    if (event.isMainFrame) event.preventDefault();
+  });
   window.webContents.on('will-redirect', event => event.preventDefault());
   window.webContents.on('will-attach-webview', event => event.preventDefault());
   await window.loadURL(endpoint.origin);

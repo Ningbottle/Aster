@@ -22,6 +22,7 @@ export default defineConfig({
         + '\n\nPhosphor icons:\n\n' + readFileSync('node_modules/@phosphor-icons/react/LICENSE', 'utf8')
         + '\n\nreact-markdown:\n\n' + readFileSync('node_modules/react-markdown/license', 'utf8')
         + '\n\nremark-gfm:\n\n' + readFileSync('node_modules/remark-gfm/license', 'utf8')
+        + '\n\npdfjs-dist:\n\n' + readFileSync('node_modules/pdfjs-dist/LICENSE', 'utf8')
         + '\n\nInter font (SIL OFL 1.1):\n\n' + readFileSync('src/renderer/assets/fonts/Inter-OFL.txt', 'utf8')
         + '\n\nThinkRail — Copyright 2026 JetBrains s.r.o.:\n\n' + readFileSync('vendor/thinkrail/LICENSE', 'utf8') });
     } }],

@@ -246,6 +246,7 @@ export const WS_METHODS = {
 	prReopen: "pr.reopen",
 	fsReadDir: "fs.readDir",
 	fsReadFile: "fs.readFile",
+	fsReadBinary: "fs.readBinary",
 	specGraph: "spec.graph",
 	todoList: "todo.list",
 	todoAdd: "todo.add",
@@ -697,6 +698,11 @@ export interface WsMethodMap {
 	"fs.readFile": {
 		params: { workspaceId: string; path: string };
 		result: { content: string; meta: ResourceMeta };
+	};
+	/** Base64 payload for previews the text channel cannot carry (images, PDF). */
+	"fs.readBinary": {
+		params: { workspaceId: string; path: string };
+		result: { data: string; mime: string; byteLength: number };
 	};
 	"spec.graph": { params: { workspaceId: string }; result: SpecGraphSnapshot };
 	"todo.list": {

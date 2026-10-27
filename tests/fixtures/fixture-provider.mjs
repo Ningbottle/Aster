@@ -10,6 +10,7 @@ export const FIXTURE_MARKERS = {
   writeDone: 'ASTER_HOST_WRITE_OK',
   editPrompt: 'ASTER_HOST_EDIT_FIXTURE',
   editDone: 'ASTER_HOST_EDIT_OK',
+  previewPrompt: 'ASTER_HOST_PREVIEW_FIXTURE',
   cancelBegin: 'ASTER_HOST_CANCEL_BEGIN',
   skillExpanded: 'ASTER_SKILL_FIXTURE_MARKER',
   questionPrompt: 'ASTER_HOST_QUESTION_FIXTURE',
@@ -113,6 +114,13 @@ function writeToolCalls(events) {
       ],
     }),
     events.delta({}, 'tool_calls', USAGE),
+  ].join('');
+}
+
+function previewAnswer(events) {
+  return [
+    events.delta({ role: 'assistant', content: 'Preview fixtures for the details panel:\n\n- [preview-image.svg](preview-image.svg)\n- [preview-doc.pdf](preview-doc.pdf)\n- [preview-page.html](preview-page.html)\n' }),
+    events.delta({}, 'stop', USAGE),
   ].join('');
 }
 
@@ -523,6 +531,11 @@ export async function startFixtureProvider() {
       }
       if (prompt.includes(FIXTURE_MARKERS.alignPrompt) || prompt.includes('不用三角形')) {
         const frames = (alignAnswer(sse, hasToolResults(body.messages)) + sse.done()).split('\n\n').filter(Boolean);
+        streamFrames(res, frames);
+        return;
+      }
+      if (prompt.includes(FIXTURE_MARKERS.previewPrompt)) {
+        const frames = (previewAnswer(sse) + sse.done()).split('\n\n').filter(Boolean);
         streamFrames(res, frames);
         return;
       }

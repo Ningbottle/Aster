@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync, realpathSync } from "node:fs";
+import { readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import type { FileNode, ResourceMeta } from "@thinkrail/contracts";
 import { loadWorkspaces } from "../persistence";
@@ -92,4 +92,37 @@ export function resolveWorktreeFile(
 	options: { followLeaf?: boolean } = {},
 ): string {
 	return resolveInWorktree(workspaceId, path, options.followLeaf !== false).abs;
+}
+
+/** Base64 read for in-app previews; the byte cap keeps one panel from pinning the host. */
+const BINARY_PREVIEW_LIMIT = 16 * 1024 * 1024;
+
+const PREVIEW_MIME: Readonly<Record<string, string>> = {
+	png: "image/png",
+	jpg: "image/jpeg",
+	jpeg: "image/jpeg",
+	gif: "image/gif",
+	webp: "image/webp",
+	svg: "image/svg+xml",
+	avif: "image/avif",
+	pdf: "application/pdf",
+};
+
+export function previewMime(path: string): string {
+	const extension = path.split(".").pop()?.toLowerCase() ?? "";
+	return PREVIEW_MIME[extension] ?? "application/octet-stream";
+}
+
+export function readBinary(
+	workspaceId: string,
+	path: string,
+): { data: string; mime: string; byteLength: number } {
+	const { abs } = resolveInWorktree(workspaceId, path, true);
+	const info = statSync(abs);
+	if (!info.isFile()) throw new Error("The path is not a file");
+	if (info.size > BINARY_PREVIEW_LIMIT) {
+		throw new Error(`The file is too large to preview (${info.size} bytes; limit ${BINARY_PREVIEW_LIMIT})`);
+	}
+	const bytes = readFileSync(abs);
+	return { data: bytes.toString("base64"), mime: previewMime(path), byteLength: bytes.byteLength };
 }

@@ -103,7 +103,7 @@ import { selectDirectory } from "../dialog";
 import { listAvailableEditors, openEditor, revealInFileManager } from "../editors";
 import { listExtensionCatalog } from "../extensions";
 import { recordAcceptedMessage, respondToInterview } from "../feedback";
-import { readDir, readFile } from "../fs";
+import { readBinary, readDir, readFile } from "../fs";
 import {
 	commitsAheadOf,
 	countPushDivergence,
@@ -701,6 +701,10 @@ const handlers: WsHandlers = {
 	"fs.readFile": (p) => {
 		void ensureWatch(p.workspaceId);
 		return readFile(p.workspaceId, p.path);
+	},
+	"fs.readBinary": (p) => {
+		void ensureWatch(p.workspaceId);
+		return readBinary(p.workspaceId, p.path);
 	},
 	"spec.graph": (p) => {
 		void ensureWatch(p.workspaceId);
