@@ -261,6 +261,47 @@ export function diffForToolArgs(name: string, args: unknown): LineDiff | null {
   return null;
 }
 
+export interface SplitRow {
+  left: DiffLine | null;
+  right: DiffLine | null;
+}
+
+/**
+ * Pairs each run of deletions with the additions that follow it, so the split
+ * view keeps one edit on one row and pads the other side.
+ */
+export function splitRows(lines: readonly DiffLine[]): SplitRow[] {
+  const rows: SplitRow[] = [];
+  let deleted: DiffLine[] = [];
+  let added: DiffLine[] = [];
+  const flush = () => {
+    const count = Math.max(deleted.length, added.length);
+    for (let index = 0; index < count; index += 1) rows.push({ left: deleted[index] ?? null, right: added[index] ?? null });
+    deleted = [];
+    added = [];
+  };
+  for (const line of lines) {
+    if (line.kind === 'context') {
+      flush();
+      rows.push({ left: line, right: line });
+    } else if (line.kind === 'del') {
+      if (added.length) flush();
+      deleted.push(line);
+    } else {
+      added.push(line);
+    }
+  }
+  flush();
+  return rows;
+}
+
+/** Language tag for the diff header; empty when the extension is unknown. */
+export function languageOf(path: string): string {
+  const extension = path.replaceAll('\\', '/').split('.').pop()?.toLowerCase() ?? '';
+  const known: Record<string, string> = { ts: 'ts', tsx: 'tsx', js: 'js', jsx: 'jsx', mjs: 'js', cjs: 'js', css: 'css', json: 'json', md: 'md', py: 'py', rs: 'rust', go: 'go', sh: 'sh', yml: 'yaml', yaml: 'yaml', html: 'html' };
+  return known[extension] ?? '';
+}
+
 /** Aggregate real per-file changes for the details panel; paths without diff data are omitted. */
 export function summarizeChanges(calls: ReadonlyArray<{ name: string; arguments: unknown }>): FileChange[] {
   const changes = new Map<string, FileChange>();

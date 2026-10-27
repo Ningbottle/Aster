@@ -4,7 +4,9 @@ import {
   diffForToolArgs,
   extractEditPairs,
   extractWriteContent,
+  languageOf,
   normalizeToolName,
+  splitRows,
   summarizeChanges,
   toolFilePath,
 } from '../../src/renderer/diff';
@@ -103,5 +105,43 @@ describe('tool argument extraction', () => {
       { path: 'src/a.ts', additions: 1, deletions: 0 },
       { path: 'src/b.ts', additions: 2, deletions: 0 },
     ]);
+  });
+});
+
+describe('splitRows', () => {
+  const line = (kind: 'context' | 'add' | 'del', text: string, oldNumber: number | null, newNumber: number | null) => ({ kind, text, oldNumber, newNumber });
+
+  test('pairs a replacement run on one row and pads the shorter side', () => {
+    const rows = splitRows([
+      line('del', 'a', 1, null),
+      line('del', 'b', 2, null),
+      line('add', 'a2', null, 1),
+    ]);
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toEqual({ left: expect.objectContaining({ text: 'a' }), right: expect.objectContaining({ text: 'a2' }) });
+    expect(rows[1]).toEqual({ left: expect.objectContaining({ text: 'b' }), right: null });
+  });
+
+  test('keeps context lines on both sides and separates blocks', () => {
+    const rows = splitRows([
+      line('del', 'old', 1, null),
+      line('add', 'new', null, 1),
+      line('context', 'stay', 2, 2),
+      line('add', 'extra', null, 3),
+    ]);
+    expect(rows.map(row => [row.left?.text ?? null, row.right?.text ?? null])).toEqual([
+      ['old', 'new'],
+      ['stay', 'stay'],
+      [null, 'extra'],
+    ]);
+  });
+});
+
+describe('languageOf', () => {
+  test('labels known extensions and stays empty otherwise', () => {
+    expect(languageOf('src/App.tsx')).toBe('tsx');
+    expect(languageOf('docs\\readme.MD')).toBe('md');
+    expect(languageOf('src/config.yml')).toBe('yaml');
+    expect(languageOf('LICENSE')).toBe('');
   });
 });

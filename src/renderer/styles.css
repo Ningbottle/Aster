@@ -350,23 +350,37 @@ button:disabled { cursor: default; }
 .jump-latest { position: absolute; z-index: 6; bottom: 12px; left: 0; right: 0; display: flex; width: fit-content; max-width: calc(100% - 32px); margin: 0 auto; padding: 5px 10px; border: 1px solid var(--line-strong); border-radius: 20px; background: var(--raised); box-shadow: 0 3px 12px rgba(0, 0, 0, .10); font: 12px var(--ui-font); }
 
 /* Diff card */
-.diff-card { margin: 4px 0 0; overflow: hidden; border: 1px solid var(--line-strong); border-radius: 10px; background: #f9f9f7; }
-.diff-card-head { display: flex; align-items: center; gap: 6px; height: 30px; padding: 0 5px 0 10px; border-bottom: 1px solid var(--line); }
+.diff-card { margin: 4px 0 0; overflow: hidden; border: 1px solid var(--line-strong); border-radius: 10px; background: #fff; }
+.diff-card-head { display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 5px 0 10px; border-bottom: 1px solid var(--line); background: #f7f7f4; }
 .diff-card-path { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: var(--text-2); font: 12px var(--font-anthropic-mono); text-align: left; }
 .diff-card-path:hover { color: var(--text-1); }
+.diff-lang { flex: none; padding: 1px 5px; border-radius: 4px; background: var(--pressed); color: var(--text-3); font: 10px/14px var(--font-anthropic-mono); text-transform: uppercase; }
+.diff-counts { flex: none; display: flex; gap: 6px; font: 11px/1 var(--font-anthropic-mono); font-variant-numeric: tabular-nums; }
+.diff-counts .add { color: #1e9e3c; }
+.diff-counts .del { color: #cd2054; }
+.diff-modes { flex: none; display: flex; gap: 1px; padding: 1px; border-radius: 6px; background: var(--pressed); }
+.diff-modes button { padding: 2px 6px; border-radius: 5px; color: var(--text-3); font-size: 11px; cursor: pointer; }
+.diff-modes button:hover { color: var(--text-1); }
+.diff-modes button[aria-pressed="true"] { background: #fff; color: var(--text-1); box-shadow: 0 0 0 1px var(--line); }
 .diff-copy { width: 24px; height: 24px; color: var(--text-3); }
 .diff-copy:hover { color: var(--text-1); }
-.diff-scroll { max-height: 380px; overflow: auto; padding: 4px 0; }
-.diff-hunk + .diff-hunk { margin-top: 4px; padding-top: 4px; border-top: 1px solid var(--line); }
-.diff-hunk-head { padding: 1px 11px; color: var(--text-3); font: 11px/20px var(--font-anthropic-mono); }
-.diff-line { display: flex; align-items: flex-start; font: 12px/1.65 var(--font-anthropic-mono); }
-.diff-line-number { flex: 0 0 40px; padding-right: 9px; text-align: right; color: #a3a29d; user-select: none; }
-.diff-sign { flex: 0 0 13px; color: #9b9a95; user-select: none; }
-.diff-line code { flex: 1; min-width: 0; padding: 0 11px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; color: #343330; font: inherit; }
-.diff-line.del { background: #fdf0ee; }
-.diff-line.del .diff-sign, .diff-line.del .diff-line-number { color: #a44c3c; }
-.diff-line.add { background: #eef5ef; }
-.diff-line.add .diff-sign, .diff-line.add .diff-line-number { color: #3f7a55; }
+.diff-scroll { max-height: 380px; overflow: auto; }
+.diff-hunk + .diff-hunk { border-top: 1px solid var(--line); }
+.diff-hunk-head { padding: 1px 11px; color: var(--text-3); font: 11px/20px var(--font-anthropic-mono); background: #fbfbf9; }
+.diff-table { width: 100%; border-collapse: collapse; font: 12px/1.65 var(--font-anthropic-mono); }
+.diff-num { width: 38px; padding: 0 6px; border-right: 1px solid var(--line); color: #a3a29d; font-size: 11px; font-variant-numeric: tabular-nums; text-align: right; vertical-align: top; user-select: none; }
+.diff-mark { width: 14px; color: #9b9a95; text-align: center; vertical-align: top; user-select: none; }
+.diff-code { padding-right: 12px; color: #343330; white-space: pre; vertical-align: top; }
+/* 12% tints match the reference diff surfaces. */
+.diff-row.add { background: rgba(16, 185, 129, .12); }
+.diff-row.del { background: rgba(239, 68, 68, .12); }
+.diff-row.add .diff-num, .diff-row.add .diff-mark { color: #1e9e3c; }
+.diff-row.del .diff-num, .diff-row.del .diff-mark { color: #cd2054; }
+.diff-row.blank { background: var(--hover); }
+.diff-split { display: grid; grid-template-columns: 1fr 1fr; }
+.diff-split > .diff-side + .diff-side { border-left: 1px solid var(--line); }
+.diff-split .diff-table { table-layout: fixed; }
+.diff-split .diff-code { overflow: hidden; text-overflow: clip; }
 
 /* Composer: 770px measure, 46px single-line pill, metadata row on the canvas. */
 .composer-region { position: relative; width: 100%; min-width: 0; }
@@ -462,6 +476,15 @@ button:disabled { cursor: default; }
 .cds-skeleton-band { position: absolute; inset: 0; background: linear-gradient(105deg, transparent 35%, rgba(255, 255, 255, .55) 50%, transparent 65%); animation: cds-skeleton-sweep 2s linear infinite; }
 
 /* Details */
+.details-preview { flex-shrink: 0; overflow: hidden; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--raised); }
+.details-preview-head { display: flex; align-items: center; gap: 6px; height: 30px; padding: 0 5px 0 10px; border-bottom: 1px solid var(--line); background: var(--hover); }
+.details-preview-path { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: var(--text-2); font: 12px var(--font-anthropic-mono); }
+.details-preview-open { flex: none; color: var(--text-2); font-size: 11.5px; }
+.details-preview-text { margin: 0; max-height: 340px; overflow: auto; padding: 8px 10px; color: var(--text-1); font: 11.5px/1.6 var(--font-anthropic-mono); white-space: pre; }
+.details-preview-markdown { max-height: 340px; overflow: auto; padding: 10px 12px; font-size: 12.5px; }
+.details-preview-note { padding: 0 10px 8px; }
+.output-busy { margin-left: auto; color: var(--text-3); }
+.output-error { color: var(--clay); }
 .details-panel { grid-column: 3; grid-row: 2; display: flex; flex-direction: column; gap: 8px; min-height: 0; overflow-y: auto; padding: 17px 18px 18px 2px; background: var(--canvas); }
 .details-close { display: none; }
 .info-card { flex-shrink: 0; padding: 12px 12px 7px; border: 1px solid var(--line-strong); border-radius: 12px; background: transparent; }

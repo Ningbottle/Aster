@@ -14,7 +14,7 @@ import type { UiImage, UiToolActivity } from './model';
 import { CdsButton as Button } from './cds/Button';
 import { FileIcon } from './FileIcon';
 import { ImageBlock } from './ImageAttachment';
-import { diffForToolArgs, normalizeToolName, toolFilePath, type DiffHunk, type LineDiff } from './diff';
+import { diffForToolArgs, languageOf, normalizeToolName, splitRows, toolFilePath, type DiffHunk, type DiffLine, type LineDiff } from './diff';
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   return typeof value === 'object' && value !== null && !Array.isArray(value) ? value as Record<string, unknown> : null;
@@ -107,6 +107,7 @@ function summaryLabel(tool: UiToolActivity, path: string | undefined) {
 }
 
 function DiffCard({ path, diff, onOpenFile }: { path: string; diff: LineDiff; onOpenFile?: (path: string) => void }) {
+  const [mode, setMode] = useState<'unified' | 'split'>('unified');
   const [copied, setCopied] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => () => { if (timer.current) clearTimeout(timer.current); }, []);
@@ -119,34 +120,56 @@ function DiffCard({ path, diff, onOpenFile }: { path: string; diff: LineDiff; on
     void navigator.clipboard.writeText(text).then(() => {
       setCopied(true);
       if (timer.current) clearTimeout(timer.current);
-      timer.current = setTimeout(() => setCopied(false), 1400);
+      timer.current = setTimeout(() => setCopied(false), 2500);
     }, () => setCopied(false));
   }
+  const language = languageOf(path);
+  /** Split only helps when a line was removed; a pure write has nothing to compare. */
+  const canSplit = diff.additions > 0 && diff.deletions > 0;
   return <div className="diff-card">
     <div className="diff-card-head">
       <FileIcon path={path} size={14} />
       {onOpenFile
         ? <button type="button" className="diff-card-path" title={`Open ${path}`} onClick={() => onOpenFile(path)}>{path}</button>
         : <span className="diff-card-path" title={path}>{path}</span>}
+      {language && <span className="diff-lang">{language}</span>}
+      <span className="diff-counts"><span className="add">+{diff.additions}</span><span className="del">-{diff.deletions}</span></span>
+      <div className="diff-modes" role="group" aria-label="Diff view">
+        <button type="button" aria-pressed={mode === 'unified'} onClick={() => setMode('unified')}>Unified</button>
+        {canSplit && <button type="button" aria-pressed={mode === 'split'} onClick={() => setMode('split')}>Split</button>}
+      </div>
       <Button variant="ghost" size="icon" className="diff-copy" aria-label={copied ? 'Diff copied' : 'Copy diff'} title={copied ? 'Copied' : 'Copy diff'} onClick={copyDiff}>
         {copied ? <Check size={14} /> : <Copy size={14} />}
       </Button>
     </div>
     <div className="diff-scroll">
-      {diff.hunks.map((hunk, index) => <DiffHunkView hunk={hunk} key={index} />)}
+      {diff.hunks.map((hunk, index) => <DiffHunkView hunk={hunk} mode={canSplit ? mode : 'unified'} key={index} />)}
     </div>
   </div>;
 }
 
-function DiffHunkView({ hunk }: { hunk: DiffHunk }) {
+function DiffHunkView({ hunk, mode }: { hunk: DiffHunk; mode: 'unified' | 'split' }) {
+  const rows = mode === 'split' ? splitRows(hunk.lines) : null;
   return <div className="diff-hunk">
     <div className="diff-hunk-head">@@ -{hunk.oldStart},{hunk.oldCount} +{hunk.newStart},{hunk.newCount} @@</div>
-    {hunk.lines.map((line, index) => <div className={`diff-line ${line.kind}`} key={index}>
-      <span className="diff-line-number">{line.kind === 'del' ? line.oldNumber : line.newNumber}</span>
-      <span className="diff-sign" aria-hidden="true">{line.kind === 'add' ? '+' : line.kind === 'del' ? '−' : ' '}</span>
-      <code>{line.text || '\u00a0'}</code>
-    </div>)}
+    {rows
+      ? <div className="diff-split">
+        <table className="diff-table diff-side"><tbody>{rows.map((row, index) => <DiffRow line={row.left} key={index} />)}</tbody></table>
+        <table className="diff-table diff-side"><tbody>{rows.map((row, index) => <DiffRow line={row.right} key={index} />)}</tbody></table>
+      </div>
+      : <table className="diff-table"><tbody>{hunk.lines.map((line, index) => <DiffRow line={line} key={index} />)}</tbody></table>}
   </div>;
+}
+
+/** Two gutters keep added and removed line numbers aligned with the source. */
+function DiffRow({ line }: { line: DiffLine | null }) {
+  if (!line) return <tr className="diff-row blank"><td className="diff-num" /><td className="diff-num" /><td className="diff-mark" /><td className="diff-code" /></tr>;
+  return <tr className={`diff-row ${line.kind}`}>
+    <td className="diff-num">{line.oldNumber ?? ''}</td>
+    <td className="diff-num">{line.newNumber ?? ''}</td>
+    <td className="diff-mark" aria-hidden="true">{line.kind === 'add' ? '+' : line.kind === 'del' ? '−' : ''}</td>
+    <td className="diff-code">{line.text || ' '}</td>
+  </tr>;
 }
 
 function GenericDetail({ tool, path }: { tool: UiToolActivity; path?: string }) {

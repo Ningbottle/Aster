@@ -8,6 +8,8 @@ export const FIXTURE_MARKERS = {
   answer: 'ASTER_HOST_ANSWER',
   readDone: 'ASTER_HOST_READ_OK',
   writeDone: 'ASTER_HOST_WRITE_OK',
+  editPrompt: 'ASTER_HOST_EDIT_FIXTURE',
+  editDone: 'ASTER_HOST_EDIT_OK',
   cancelBegin: 'ASTER_HOST_CANCEL_BEGIN',
   skillExpanded: 'ASTER_SKILL_FIXTURE_MARKER',
   questionPrompt: 'ASTER_HOST_QUESTION_FIXTURE',
@@ -110,6 +112,26 @@ function writeToolCalls(events) {
         { index: 1, function: { arguments: writeArgs.slice(12) } },
       ],
     }),
+    events.delta({}, 'tool_calls', USAGE),
+  ].join('');
+}
+
+function editToolCalls(events) {
+  const args = JSON.stringify({
+    path: WRITE_FILE,
+    edits: [{ oldText: FIXTURE_MARKERS.writeDone, newText: FIXTURE_MARKERS.editDone }],
+  });
+  return [
+    events.delta({
+      role: 'assistant',
+      tool_calls: [{
+        index: 0,
+        id: 'call_edit_fixture',
+        type: 'function',
+        function: { name: 'edit', arguments: args.slice(0, 16) },
+      }],
+    }),
+    events.delta({ tool_calls: [{ index: 0, function: { arguments: args.slice(16) } }] }),
     events.delta({}, 'tool_calls', USAGE),
   ].join('');
 }
@@ -501,6 +523,12 @@ export async function startFixtureProvider() {
       }
       if (prompt.includes(FIXTURE_MARKERS.alignPrompt) || prompt.includes('不用三角形')) {
         const frames = (alignAnswer(sse, hasToolResults(body.messages)) + sse.done()).split('\n\n').filter(Boolean);
+        streamFrames(res, frames);
+        return;
+      }
+      if (prompt.includes(FIXTURE_MARKERS.editPrompt)) {
+        const payload = hasToolResults(body.messages) ? finalAnswer(sse) : editToolCalls(sse);
+        const frames = (payload + sse.done()).split('\n\n').filter(Boolean);
         streamFrames(res, frames);
         return;
       }
