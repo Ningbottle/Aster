@@ -120,6 +120,26 @@ describe('request correlation', () => {
     client.close();
   });
 
+  test('rejects a frame over the transport budget before sending it', async () => {
+    const client = new WsClient({ url: 'ws://aster.test/ws', reconnect: false, maxFrameBytes: 256 });
+    client.connect();
+    const socket = latest();
+    socket.open();
+
+    const oversized = client.request('session.prompt', { sessionId: 's1', text: 'x'.repeat(512) });
+    await expect(oversized).rejects.toBeInstanceOf(ClientRequestError);
+    await expect(oversized).rejects.toMatchObject({ message: expect.stringContaining('transport limit') });
+    expect(socket.sent).toHaveLength(0);
+
+    const normal = client.request('project.list', {});
+    expect(socket.frames()).toHaveLength(1);
+    const id = socket.frames()[0].id as string;
+    socket.receive({ id, ok: true, result: [] });
+    await expect(normal).resolves.toEqual([]);
+
+    client.close();
+  });
+
   test('answers a blocking extension dialog through the native reply method', async () => {
     const client = new WsClient({ url: 'ws://aster.test/ws', reconnect: false });
     client.connect();

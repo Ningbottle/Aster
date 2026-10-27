@@ -1,9 +1,10 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ClipboardEvent } from 'react';
-import { ArrowRight, ArrowUp, Check, FolderSimple, ImageSquare, Plus, Square, X } from '@phosphor-icons/react';
+import { ArrowRight, ArrowUp, Check, FolderSimple, ImageSquare, Plus, ShieldCheck, Square, X } from '@phosphor-icons/react';
 import {
   ACCEPTED_IMAGE_TYPES,
   IMAGE_MAX_BASE64_BYTES,
   base64EncodedLength,
+  type ApprovalMode,
   type SlashCommandInfo,
   type ThinkingLevel,
   type WireModel,
@@ -16,6 +17,10 @@ import { ContextRing } from './ContextRing';
 import { ImageLightbox, imageSource } from './ImageAttachment';
 import { ApiUsageRows, ContextUsageMeter } from './UsageCard';
 import { contextWindowUsage } from './usage';
+import { dismissesCommandMenu, isComposingKey, submitsMessage } from './composer-keys';
+import { useMenuFocus } from './menu-focus';
+
+type ComposerMenu = 'model' | 'thinking' | 'access' | 'add' | 'usage';
 
 function matchingCommands(commands: SlashCommandInfo[], draft: string): { query: string; matches: SlashCommandInfo[] } | null {
   const match = /^\/(\S*)$/.exec(draft);
@@ -70,24 +75,29 @@ function readAttachment(file: File, mimeType: string): Promise<ComposerAttachmen
   });
 }
 
-export function PromptComposer({ onChooseProject, view, onSend, onAbort, onRelease, onSetModel, onSetThinking, onOpenDetails, pending }: {
+export function PromptComposer({ onChooseProject, view, onSend, onAbort, onSetApproval, onSetModel, onSetThinking, onOpenDetails, pending, awaitingInput }: {
   view: DesktopView; onChooseProject: () => void; onSend: (text: string, images: UiImage[]) => Promise<boolean>;
-  onAbort: () => void; onRelease: () => void;
-  onSetModel: (model: WireModel) => void; onSetThinking: (level: ThinkingLevel) => void; onOpenDetails: () => void; pending: boolean;
+  onAbort: () => void; onSetApproval: (mode: ApprovalMode) => void;
+  onSetModel: (model: WireModel) => void; onSetThinking: (level: ThinkingLevel) => void; onOpenDetails: () => void; pending: boolean; awaitingInput: boolean;
 }) {
   const [draft, setDraft] = useState('');
+  const [dismissedCommand, setDismissedCommand] = useState<string | null>(null);
+  const [commandIndex, setCommandIndex] = useState(0);
   const [attachments, setAttachments] = useState<ComposerAttachment[]>([]);
   const [attachError, setAttachError] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
   const [preview, setPreview] = useState<number | null>(null);
-  const [menu, setMenu] = useState<'model' | 'thinking' | 'stop' | 'add' | 'usage' | null>(null);
+  const [menu, setMenu] = useState<ComposerMenu | null>(null);
   const [menuBox, setMenuBox] = useState<{ left: number; bottom: number } | null>(null);
   const textarea = useRef<HTMLTextAreaElement>(null);
+  const composing = useRef(false);
   const region = useRef<HTMLDivElement>(null);
+  const menuPanel = useRef<HTMLDivElement>(null);
   const usageCard = useRef<HTMLDivElement>(null);
   const filePicker = useRef<HTMLInputElement>(null);
   const previewOpener = useRef<HTMLElement | null>(null);
-  const triggers = useRef<Partial<Record<'model' | 'thinking' | 'stop' | 'add' | 'usage', HTMLButtonElement | null>>>({});
+  const triggers = useRef<Partial<Record<ComposerMenu, HTMLButtonElement | null>>>({});
+  useMenuFocus(menu, menuPanel);
   const identity = view.activeSession?.session.sessionId ?? '';
   const previousIdentity = useRef(identity);
   /** Drafts survive switching sessions; a sent draft is removed, an empty draft is not stored. */
@@ -96,15 +106,16 @@ export function PromptComposer({ onChooseProject, view, onSend, onAbort, onRelea
   const canEdit = !!view.activeSession && connected && !view.loading;
   const hasDraft = !!draft.trim() || attachments.length > 0;
   /** A running turn must stay editable: that is how a follow-up (with images) is queued. */
-  const canSend = canEdit && hasDraft;
+  const canSend = canEdit && hasDraft && !awaitingInput;
   const canStop = !!view.activeSession && (view.runtime.status === 'working' || view.runtime.status === 'stop-requested');
   const working = view.runtime.status === 'working' || view.runtime.status === 'stop-requested';
-  const project = view.activeSession?.project ?? null;
+  const approvalMode = view.activeSession?.session.approvalMode ?? 'auto';
   const hasMessages = !!view.activeSession?.messages.length;
   const usage = contextWindowUsage(view.activeSession?.stats);
   const commands = matchingCommands(view.commands, draft);
   const commandMatches = commands?.matches ?? [];
-  const showCommands = canEdit && commandMatches.length > 0;
+  const showCommands = canEdit && !awaitingInput && commandMatches.length > 0 && dismissedCommand !== draft;
+  const activeCommandIndex = showCommands ? Math.min(commandIndex, commandMatches.length - 1) : -1;
   const resize = () => {
     const input = textarea.current;
     if (!input) return;
@@ -142,24 +153,31 @@ export function PromptComposer({ onChooseProject, view, onSend, onAbort, onRelea
     setMenu(null);
     setPreview(null);
     setAttachError(null);
+    setDismissedCommand(null);
     const saved = identity ? drafts.current.get(identity) : undefined;
     setDraft(saved?.text ?? '');
     setAttachments(saved?.images ?? []);
     if (textarea.current) textarea.current.style.height = 'auto';
   }, [identity]);
   useEffect(resize, [draft]);
+  useEffect(() => { setCommandIndex(0); }, [draft, commandMatches.length]);
+  useEffect(() => {
+    if (!showCommands) return;
+    region.current?.querySelector<HTMLElement>(`.command-menu [data-command-index="${activeCommandIndex}"]`)?.scrollIntoView({ block: 'nearest' });
+  }, [activeCommandIndex, showCommands]);
   useEffect(() => {
     if (!menu) { setMenuBox(null); return; }
     const trigger = triggers.current[menu];
     if (!trigger) return;
-    const widths = { model: 300, thinking: 190, stop: 268, add: 184, usage: 322 } as const;
+    const widths = { model: 300, thinking: 190, access: 310, add: 184, usage: 322 } as const;
     const width = widths[menu];
     const rect = trigger.getBoundingClientRect();
     const regionTop = region.current?.getBoundingClientRect().top ?? rect.top;
+    const composerTop = region.current?.querySelector<HTMLElement>('.composer')?.getBoundingClientRect().top ?? regionTop;
     const preferred = menu === 'model' ? rect.right - width : rect.left;
     setMenuBox({
       left: Math.min(Math.max(8, preferred), Math.max(8, window.innerWidth - width - 8)),
-      bottom: Math.max(8, window.innerHeight - regionTop + 8),
+      bottom: Math.max(8, window.innerHeight - (menu === 'add' ? regionTop : composerTop) + 8),
     });
   }, [menu]);
   useEffect(() => {
@@ -227,6 +245,7 @@ export function PromptComposer({ onChooseProject, view, onSend, onAbort, onRelea
     setDraft('');
     setAttachments([]);
     setPreview(null);
+    setDismissedCommand(null);
     storeDraft('', []);
     if (await onSend(text, sent.map(({ data, mimeType }) => ({ data, mimeType })))) return;
     // A rejected send restores the draft unless the user moved on or already started writing again.
@@ -268,6 +287,8 @@ export function PromptComposer({ onChooseProject, view, onSend, onAbort, onRelea
         </div>)}
       </div>}
       <textarea ref={textarea} value={draft} onChange={event => changeDraft(event.target.value)}
+        onCompositionStart={() => { composing.current = true; }}
+        onCompositionEnd={() => { composing.current = false; }}
         onPaste={event => {
           const files = pastedImages(event);
           if (files.length === 0) return;
@@ -275,16 +296,23 @@ export function PromptComposer({ onChooseProject, view, onSend, onAbort, onRelea
           void addFiles(files);
         }}
         onKeyDown={event => {
-          if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing && event.nativeEvent.keyCode !== 229) { event.preventDefault(); void submit(); }
-          if (event.key === 'Escape' && showCommands) { event.preventDefault(); changeDraft(''); }
-        }} placeholder={working ? 'Queue a follow-up' : !hasMessages ? 'Describe a task or ask a question' : 'Type / for commands'} disabled={!canEdit} rows={1} aria-label="Message Aster" />
+          const key = { key: event.key, shiftKey: event.shiftKey, isComposing: event.nativeEvent.isComposing, keyCode: event.nativeEvent.keyCode };
+          if (isComposingKey(key, composing.current)) return;
+          if (showCommands) {
+            if (event.key === 'ArrowDown') { event.preventDefault(); setCommandIndex(index => (index + 1) % commandMatches.length); return; }
+            if (event.key === 'ArrowUp') { event.preventDefault(); setCommandIndex(index => (index - 1 + commandMatches.length) % commandMatches.length); return; }
+            if (event.key === 'Enter') { event.preventDefault(); const command = commandMatches[activeCommandIndex]; if (command) insertCommand(command); return; }
+            if (dismissesCommandMenu(key, composing.current, showCommands)) { event.preventDefault(); setDismissedCommand(draft); return; }
+          }
+          if (submitsMessage(key, composing.current)) { event.preventDefault(); void submit(); }
+        }} placeholder={awaitingInput ? 'Answer the open request' : working ? 'Queue a follow-up' : !hasMessages ? 'Describe a task or ask a question' : 'Type / for commands'} disabled={!canEdit} rows={1} aria-label="Message Aster" />
       <div className="composer-chin">
         <div className="composer-left">
           <div className="menu-anchor composer-add">
             <Button variant="ghost" size="icon" className="icon-button composer-plus" aria-label="Add content" title="Add content" ref={element => { triggers.current.add = element; }} aria-expanded={menu === 'add'} onClick={() => setMenu(menu === 'add' ? null : 'add')}><Plus size={16} /></Button>
-            {menu === 'add' && <div className="popover add-menu" style={menuStyle}>
-              <Button variant="ghost" size="xs" className="menu-row" disabled={!canEdit} onClick={() => { setMenu(null); filePicker.current?.click(); }}><ImageSquare size={16} />Add image</Button>
-              <Button variant="ghost" size="xs" className="menu-row" onClick={() => { setMenu(null); onChooseProject(); }}><FolderSimple size={16} />Open folder</Button>
+            {menu === 'add' && <div className="popover add-menu" style={menuStyle} role="menu" aria-label="Add content" ref={menuPanel}>
+              <Button variant="ghost" size="xs" role="menuitem" className="menu-row" disabled={!canEdit} onClick={() => { setMenu(null); filePicker.current?.click(); }}><ImageSquare size={16} />Add image</Button>
+              <Button variant="ghost" size="xs" role="menuitem" className="menu-row" onClick={() => { setMenu(null); onChooseProject(); }}><FolderSimple size={16} />Open folder</Button>
             </div>}
           </div>
         </div>
@@ -297,25 +325,27 @@ export function PromptComposer({ onChooseProject, view, onSend, onAbort, onRelea
     {dragging && <div className="composer-drop-hint" aria-hidden="true">Drop images to attach</div>}
     <div className="composer-meta">
       <div className="composer-meta-left">
-        {view.activeSession && !hasMessages && <Button variant="ghost" size="xs" className="composer-folder" onClick={onChooseProject} disabled={pending} title={project?.path ?? 'Choose a project folder'}><FolderSimple size={14} /><span>{project?.name ?? 'Choose folder'}</span></Button>}
         {view.activeSession && <div className="menu-anchor">
-          <Button variant="ghost" size="xs" className="permission-control" ref={element => { triggers.current.stop = element; }} onClick={() => setMenu(menu === 'stop' ? null : 'stop')} aria-haspopup="menu" aria-expanded={menu === 'stop'} title="Tool access follows the ThinkRail host and Pi configuration">Local tools</Button>
-          {menu === 'stop' && <div className="popover stop-menu" style={menuStyle} role="menu"><div className="menu-heading">Session</div>
-            {canStop && <Button variant="ghost" size="xs" role="menuitem" className="menu-row" disabled={view.runtime.status === 'stop-requested'} onClick={() => { setMenu(null); onAbort(); }}><Square size={13} weight="fill" />{view.runtime.status === 'stop-requested' ? 'Stop requested' : 'Stop'}</Button>}
-            <Button variant="ghost" size="xs" role="menuitem" className="menu-row danger" onClick={() => { setMenu(null); onRelease(); }}><X size={14} />Release session</Button>
-            {view.runtime.queued > 0 && <p>{view.runtime.queued} queued message{view.runtime.queued === 1 ? '' : 's'}</p>}
-            <p>Stop aborts the current turn. Release unloads the session runtime; the transcript stays on disk.</p>
-            <p>Pi tools run with the permissions of the local process.</p>
+          <Button variant="ghost" size="xs" icon={<ShieldCheck size={14} />} className="permission-control" ref={element => { triggers.current.access = element; }} onClick={() => setMenu(menu === 'access' ? null : 'access')} aria-haspopup="menu" aria-expanded={menu === 'access'} title={approvalMode === 'ask' ? 'Access: confirm changes' : 'Access: auto-approve'}>Access</Button>
+          {menu === 'access' && <div className="popover access-menu" style={menuStyle} role="menu" aria-label="Tool access" ref={menuPanel}>
+            <div className="menu-heading">Tool access</div>
+            {([
+              ['ask', 'Ask before changes', 'Confirm write, edit and bash before they run.'],
+              ['auto', 'Auto-approve', 'Run tools without asking.'],
+            ] as const).map(([mode, name, description]) => <Button variant="ghost" size="xs" key={mode} role="menuitemradio" aria-checked={approvalMode === mode} className="menu-row" disabled={pending} onClick={() => { triggers.current.access?.focus(); setMenu(null); onSetApproval(mode); }}>
+              <span className="menu-check">{approvalMode === mode && <Check size={13} />}</span>
+              <span className="model-row-text"><span className="model-name">{name}</span><span className="menu-sub">{description}</span></span>
+            </Button>)}
           </div>}
         </div>}
       </div>
       <div className="composer-meta-right">
         {view.models.length > 0 && <div className="menu-anchor"><Button variant="ghost" size="xs" className="composer-model" title={view.currentModel?.name ?? 'Model'} ref={element => { triggers.current.model = element; }} onClick={() => setMenu(menu === 'model' ? null : 'model')} aria-haspopup="menu" aria-expanded={menu === 'model'}>{view.currentModel?.name ?? 'Model'}</Button>
-          {menu === 'model' && <div className="popover model-menu" style={menuStyle} role="menu"><div className="menu-heading">Model</div>{view.models.map(model => <Button variant="ghost" size="xs" key={`${model.provider}/${model.id}`} role="menuitemradio" aria-checked={model.id === view.currentModel?.id && model.provider === view.currentModel?.provider} className="menu-row model-row" onClick={() => { triggers.current.model?.focus(); setMenu(null); onSetModel(model); }}><span className="model-row-text"><span className="model-name">{model.name}</span><span className="menu-sub">{model.provider}</span></span><span className="menu-check-right">{model.id === view.currentModel?.id && model.provider === view.currentModel?.provider && <Check size={14} />}</span></Button>)}</div>}
+          {menu === 'model' && <div className="popover model-menu" style={menuStyle} role="menu" ref={menuPanel}><div className="menu-heading">Model</div>{view.models.map(model => <Button variant="ghost" size="xs" key={`${model.provider}/${model.id}`} role="menuitemradio" aria-checked={model.id === view.currentModel?.id && model.provider === view.currentModel?.provider} className="menu-row model-row" onClick={() => { triggers.current.model?.focus(); setMenu(null); onSetModel(model); }}><span className="model-row-text"><span className="model-name">{model.name}</span><span className="menu-sub">{model.provider}</span></span><span className="menu-check-right">{model.id === view.currentModel?.id && model.provider === view.currentModel?.provider && <Check size={14} />}</span></Button>)}</div>}
         </div>}
         {view.availableThinkingLevels.length > 0 && <div className="menu-anchor">
           <Button variant="ghost" size="xs" className="composer-control" title="Thinking level" ref={element => { triggers.current.thinking = element; }} onClick={() => setMenu(menu === 'thinking' ? null : 'thinking')} aria-haspopup="menu" aria-expanded={menu === 'thinking'}>{capitalize(view.thinkingLevel)}</Button>
-          {menu === 'thinking' && <div className="popover thinking-menu" style={menuStyle} role="menu"><div className="menu-heading">Thinking</div>{view.availableThinkingLevels.map(level => <Button variant="ghost" size="xs" key={level} role="menuitem" className="menu-row" onClick={() => { triggers.current.thinking?.focus(); setMenu(null); onSetThinking(level); }}><span className="menu-check">{view.thinkingLevel === level && <Check size={13} />}</span>{capitalize(level)}</Button>)}<p className="menu-footnote">Applies to the next turn.</p></div>}
+          {menu === 'thinking' && <div className="popover thinking-menu" style={menuStyle} role="menu" ref={menuPanel}><div className="menu-heading">Thinking</div>{view.availableThinkingLevels.map(level => <Button variant="ghost" size="xs" key={level} role="menuitem" className="menu-row" onClick={() => { triggers.current.thinking?.focus(); setMenu(null); onSetThinking(level); }}><span className="menu-check">{view.thinkingLevel === level && <Check size={13} />}</span>{capitalize(level)}</Button>)}<p className="menu-footnote">Applies to the next turn.</p></div>}
         </div>}
         {view.activeSession
           ? <Button variant="ghost" size="icon" className="composer-usage" ref={element => { triggers.current.usage = element; }} aria-label={`Context usage: ${usage.percentLabel ?? 'unknown'}`} title={usage.title} aria-haspopup="dialog" aria-expanded={menu === 'usage'} onClick={() => setMenu(menu === 'usage' ? null : 'usage')}>
@@ -336,7 +366,7 @@ export function PromptComposer({ onChooseProject, view, onSend, onAbort, onRelea
         <Button variant="ghost" size="xs" className="usage-card-link" onClick={() => { setMenu(null); onOpenDetails(); }}>View in session details<ArrowRight size={13} /></Button>
       </div>
     </div>}
-    {showCommands && <div className="popover add-menu command-menu" role="listbox" aria-label="Commands">{commandMatches.map(command => <Button variant="ghost" size="xs" role="option" key={`${command.source}/${command.name}`} className="menu-row" onClick={() => insertCommand(command)}><span className="menu-check">/</span><span>{command.name}{command.description ? ` · ${command.description}` : ''}</span></Button>)}</div>}
+    {showCommands && <div className="popover add-menu command-menu" role="listbox" aria-label="Commands">{commandMatches.map((command, index) => <Button variant="ghost" size="xs" role="option" aria-selected={index === activeCommandIndex} data-command-index={index} onMouseEnter={() => setCommandIndex(index)} key={`${command.source}/${command.name}`} className={`menu-row${index === activeCommandIndex ? ' is-active' : ''}`} onClick={() => insertCommand(command)}><span className="menu-check">/</span><span>{command.name}{command.description ? ` · ${command.description}` : ''}</span></Button>)}</div>}
     {preview !== null && <ImageLightbox images={attachments} startIndex={preview} onClose={() => setPreview(null)} returnFocus={previewOpener} />}
   </div>;
 }

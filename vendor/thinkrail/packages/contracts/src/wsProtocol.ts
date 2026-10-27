@@ -66,6 +66,7 @@ import type {
 } from "./domain";
 import { isDelegationRunDetails } from "./domain";
 import type {
+	ApprovalMode,
 	AskUserAnswersDetails,
 	AskUserQuestionResult,
 	ExtUiResponse,
@@ -285,6 +286,7 @@ export const WS_METHODS = {
 	sessionRename: "session.rename",
 	sessionSetModel: "session.setModel",
 	sessionSetThinkingLevel: "session.setThinkingLevel",
+	sessionSetApproval: "session.setApproval",
 	sessionCompact: "session.compact",
 	sessionGetStats: "session.getStats",
 	usageGetSummary: "usage.getSummary",
@@ -826,6 +828,7 @@ export interface WsMethodMap {
 	};
 	"session.setModel": { params: { sessionId: string; model: WireModel }; result: Ack };
 	"session.setThinkingLevel": { params: { sessionId: string; level: ThinkingLevel }; result: Ack };
+	"session.setApproval": { params: { sessionId: string; mode: ApprovalMode }; result: Ack };
 	"session.compact": { params: { sessionId: string; instructions?: string }; result: Ack };
 	"session.getStats": { params: { sessionId: string }; result: SessionStats };
 	"usage.getSummary": { params: { range: UsageRange; timeZone: string }; result: UsageSummary };

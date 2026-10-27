@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import type { AskUserQuestionArgs, AskUserQuestionAnswer, AskUserQuestionResult } from '@thinkrail/contracts';
 import { CdsButton } from './cds/Button';
+import { useModalFocus } from './modal-focus';
 
 /** multi keeps the checked list and the typed answer side by side; a single choice and a custom text stay exclusive. */
 export function buildQuestionAnswers(
@@ -22,21 +23,25 @@ export function cancelledQuestionResult(): AskUserQuestionResult {
   return { answers: [], cancelled: true };
 }
 
-export function QuestionDialog({ args, onReply, pending, error }: {
-  args: AskUserQuestionArgs; onReply: (result: AskUserQuestionResult) => void; pending: boolean; error: string | null;
+export function QuestionDialog({ args, invalid = false, onReply, pending, error }: {
+  args: AskUserQuestionArgs; invalid?: boolean; onReply: (result: AskUserQuestionResult) => void; pending: boolean; error: string | null;
 }) {
   const [choices, setChoices] = useState<Record<number, string[]>>({});
   const [custom, setCustom] = useState<Record<number, string>>({});
-  const complete = args.questions.every((_, index) => choices[index]?.length || custom[index]?.trim());
+  const layer = useRef<HTMLDivElement>(null);
+  useModalFocus(layer, { fallbackFocusSelector: '[aria-label="Message Aster"]' });
+  const complete = !invalid && args.questions.every((_, index) => choices[index]?.length || custom[index]?.trim());
   const cancel = () => onReply(cancelledQuestionResult());
   const submit = () => onReply({ answers: buildQuestionAnswers(args, choices, custom), cancelled: false });
-  return <div className="modal-scrim">
+  return <div className="modal-scrim" ref={layer}>
     <form className="rename-dialog" role="dialog" aria-modal="true" aria-labelledby="question-dialog-title"
       style={{ maxHeight: '80vh', overflowY: 'auto' }}
       onKeyDown={event => { if (event.key === 'Escape' && !pending) { event.preventDefault(); cancel(); } }}
       onSubmit={event => { event.preventDefault(); if (complete && !pending) submit(); }}>
-      <h2 id="question-dialog-title">Pi needs your input</h2>
-      {args.questions.map((question, index) => <fieldset key={index} disabled={pending} style={{ border: 0, padding: '12px 0' }}>
+      <h2 id="question-dialog-title">{invalid ? 'Question unavailable' : 'Pi needs your input'}</h2>
+      {invalid
+        ? <p role="alert">The host sent a question this client cannot read. Cancel it to let the session continue.</p>
+        : args.questions.map((question, index) => <fieldset key={index} disabled={pending} style={{ border: 0, padding: '12px 0' }}>
         <legend>{question.header}</legend>
         <p>{question.question}</p>
         {question.options.map(option => <label key={option.label} style={{ display: 'flex', gap: 8, alignItems: 'flex-start', margin: '8px 0' }}>
@@ -60,8 +65,8 @@ export function QuestionDialog({ args, onReply, pending, error }: {
           }} />
       </fieldset>)}
       {error && <p role="alert">{error}</p>}
-      <div className="rename-actions"><CdsButton variant="secondary" size="sm" disabled={pending} onClick={cancel}>Cancel</CdsButton>
-        <CdsButton variant="brand" size="sm" type="submit" disabled={pending || !complete}>Send answers</CdsButton></div>
+      <div className="rename-actions"><CdsButton variant="secondary" size="sm" disabled={pending} onClick={cancel}>{invalid ? 'Cancel question' : 'Cancel'}</CdsButton>
+        {!invalid && <CdsButton variant="brand" size="sm" type="submit" disabled={pending || !complete}>Send answers</CdsButton>}</div>
     </form>
   </div>;
 }

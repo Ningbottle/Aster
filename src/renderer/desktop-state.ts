@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   WS_CHANNELS,
   normalizeSessionTitle,
+  type ApprovalMode,
   type AssistantMessage,
   type AskUserQuestionArgs,
   type AskUserQuestionResult,
@@ -20,6 +21,7 @@ import {
   type Workspace,
 } from '@thinkrail/contracts';
 import { WsClient, type ConnectionStatus } from './client';
+import { parseAskUserQuestionArgs } from './question-schema';
 import {
   sessionRuntime,
   toUiMessage,
@@ -94,7 +96,7 @@ export interface DesktopView {
   availableThinkingLevels: ThinkingLevel[];
   commands: SlashCommandInfo[];
   pendingInput: PendingInput | null;
-  pendingQuestion: { toolCallId: string; args: AskUserQuestionArgs } | null;
+  pendingQuestion: { toolCallId: string; args: AskUserQuestionArgs; invalid: boolean } | null;
   loading: boolean;
   error: string | null;
 }
@@ -453,6 +455,14 @@ export function isPendingQuestionTarget(state: AsterState, sessionId: string, to
   return view.activeSession?.session.sessionId === sessionId && view.pendingQuestion?.toolCallId === toolCallId;
 }
 
+/** A session blocked on a host dialog or question must be answered before another prompt is sent. */
+export function sessionNeedsInput(state: AsterState, sessionId: string): boolean {
+  if ((state.dialogs[sessionId]?.length ?? 0) > 0) return true;
+  const session = state.sessions.find(item => item.sessionId === sessionId);
+  const record = state.records[sessionId];
+  return Boolean((record?.state ?? session?.state)?.needsInput);
+}
+
 export function applyPiEvent(state: AsterState, payload: SessionEventPayload): AsterState {
   const event = payload.event;
   if (event.type === 'session_info_changed') return updateSession(state, payload.sessionId, session => ({ ...session, title: event.name ?? '' }));
@@ -586,8 +596,10 @@ export function selectDesktop(state: AsterState): DesktopView {
   const input = (record?.state ?? session?.state)?.needsInput;
   const questionId = input?.kind === 'question' ? input.interactionId.slice('question:'.length) : null;
   const questionCall = transcript.messages.flatMap(message => message.content).find(content => content.type === 'toolCall' && content.id === questionId);
-  const questionArgs = questionCall?.type === 'toolCall' ? questionCall.arguments as AskUserQuestionArgs : null;
-  const pendingQuestion = questionId && Array.isArray(questionArgs?.questions) ? { toolCallId: questionId, args: questionArgs } : null;
+  const questionArgs = questionCall?.type === 'toolCall' ? parseAskUserQuestionArgs(questionCall.arguments) : null;
+  const pendingQuestion = questionId
+    ? { toolCallId: questionId, args: questionArgs ?? { questions: [] }, invalid: questionArgs === null }
+    : null;
   const runtime = sessionRuntime(
     state.connection,
     session,
@@ -660,8 +672,10 @@ export interface DesktopActions {
   send(text: string, images?: UiImage[]): Promise<boolean>;
   abort(): Promise<void>;
   release(): Promise<void>;
+  setProjectTrust(projectId: string, trusted: boolean): Promise<void>;
   setModel(model: WireModel): Promise<void>;
   setThinking(level: ThinkingLevel): Promise<void>;
+  setApproval(mode: ApprovalMode): Promise<void>;
   renameSession(session: SessionSummary, title: string): Promise<boolean>;
   reply(target: { sessionId: string; requestId: string }, value: string | boolean | null): Promise<void>;
   answerQuestion(target: { sessionId: string; toolCallId: string }, result: AskUserQuestionResult): Promise<void>;
@@ -815,8 +829,12 @@ export function useDesktopState(client: WsClient, storage?: Storage | null): {
         ? current.sessions.find(item => item.sessionId === current.selected?.sessionId)
         : undefined;
       if (!session || (!text.trim() && images.length === 0)) return false;
+      if (sessionNeedsInput(current, session.sessionId)) return false;
       const accepted = await run(async () => {
-        const state = latest.current.records[session.sessionId]?.state ?? session.state;
+        // Re-read immediately before sending: a host dialog can arrive while the composer is busy.
+        const latestState = latest.current;
+        if (sessionNeedsInput(latestState, session.sessionId)) return false;
+        const state = latestState.records[session.sessionId]?.state ?? session.state;
         const params = {
           sessionId: session.sessionId,
           text,
@@ -859,6 +877,16 @@ export function useDesktopState(client: WsClient, storage?: Storage | null): {
     });
   }, [client, commit, refreshSessions, run]);
 
+  const setProjectTrust = useCallback(
+    async (projectId: string, trusted: boolean): Promise<void> => {
+      await run(async () => {
+        const project = await client.request('project.setTrust', { id: projectId, trusted, resources: trusted });
+        commit(value => upsertProject(value, project));
+      });
+    },
+    [client, commit, run],
+  );
+
   const setModel = useCallback(
     async (model: WireModel): Promise<void> => {
       const sessionId = latest.current.selected?.sessionId;
@@ -878,6 +906,18 @@ export function useDesktopState(client: WsClient, storage?: Storage | null): {
       await run(async () => {
         await client.request('session.setThinkingLevel', { sessionId, level });
         commit(value => updateSession(value, sessionId, session => ({ ...session, thinkingLevel: level })));
+      });
+    },
+    [client, commit, run],
+  );
+
+  const setApproval = useCallback(
+    async (mode: ApprovalMode): Promise<void> => {
+      const sessionId = latest.current.selected?.sessionId;
+      if (!sessionId) return;
+      await run(async () => {
+        await client.request('session.setApproval', { sessionId, mode });
+        commit(value => updateSession(value, sessionId, session => ({ ...session, approvalMode: mode })));
       });
     },
     [client, commit, run],
@@ -1126,15 +1166,17 @@ export function useDesktopState(client: WsClient, storage?: Storage | null): {
       send,
       abort,
       release,
+      setProjectTrust,
       setModel,
       setThinking,
+      setApproval,
       renameSession,
       reply,
       answerQuestion,
       reportError,
       dismissError,
     }),
-    [chooseProject, newSession, openSession, send, abort, release, setModel, setThinking, renameSession, reply, answerQuestion, reportError, dismissError],
+    [chooseProject, newSession, openSession, send, abort, release, setProjectTrust, setModel, setThinking, setApproval, renameSession, reply, answerQuestion, reportError, dismissError],
   );
 
   const view = useMemo(() => selectDesktop(state), [state]);

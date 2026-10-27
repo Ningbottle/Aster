@@ -69,6 +69,7 @@ import {
 	resolveExtUi,
 	sendReviewFixToSession,
 	setModelContextWindow,
+	setSessionApproval,
 	setSessionModel,
 	setSessionThinkingLevel,
 	steerSession,
@@ -1024,6 +1025,10 @@ const handlers: WsHandlers = {
 	},
 	"session.setThinkingLevel": (p) => {
 		setSessionThinkingLevel(p.sessionId, p.level);
+		return { ok: true } as const;
+	},
+	"session.setApproval": (p) => {
+		setSessionApproval(p.sessionId, p.mode);
 		return { ok: true } as const;
 	},
 	"session.compact": async (p) => {

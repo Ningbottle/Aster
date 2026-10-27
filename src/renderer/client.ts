@@ -11,6 +11,13 @@ export type ConnectionStatus = 'connecting' | 'connected' | 'disconnected';
 
 const OPEN = 1;
 const DEFAULT_TIMEOUT_MS = 60_000;
+/** Bun's default WebSocket payload cap is 16 MiB; keep headroom for the request envelope. */
+const DEFAULT_MAX_FRAME_BYTES = 15 * 1024 * 1024;
+const textEncoder = new TextEncoder();
+
+function frameSize(bytes: number): string {
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
 
 export class ClientRequestError extends Error {
   readonly code: WsErrorCode | undefined;
@@ -36,6 +43,7 @@ export class ClientDisconnectedError extends Error {
 export interface WsClientOptions {
   url?: string;
   timeoutMs?: number;
+  maxFrameBytes?: number;
   reconnect?: boolean;
 }
 
@@ -70,6 +78,7 @@ export function resolveWsUrl(href: string): string {
 export class WsClient {
   private readonly url: string;
   private readonly timeoutMs: number;
+  private readonly maxFrameBytes: number;
   private readonly reconnect: boolean;
   private readonly pending = new Map<string, PendingRequest>();
   private readonly subscribers = new Map<string, Set<(data: unknown) => void>>();
@@ -86,6 +95,7 @@ export class WsClient {
   constructor(options: WsClientOptions = {}) {
     this.url = options.url ?? resolveWsUrl(location.href);
     this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+    this.maxFrameBytes = options.maxFrameBytes ?? DEFAULT_MAX_FRAME_BYTES;
     this.reconnect = options.reconnect ?? true;
   }
 
@@ -149,6 +159,12 @@ export class WsClient {
       params,
       ...(options.sessionId ? { sessionId: options.sessionId } : {}),
     });
+    const bytes = textEncoder.encode(frame).byteLength;
+    if (bytes > this.maxFrameBytes) {
+      return Promise.reject(new ClientRequestError(
+        `"${method}" is ${frameSize(bytes)}; the local transport limit is ${frameSize(this.maxFrameBytes)}. Remove attachments or shorten the message.`,
+      ));
+    }
     return new Promise<WsResult<M>>((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(id);

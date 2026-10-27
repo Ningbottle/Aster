@@ -199,12 +199,17 @@ export interface RemovedQueuedMessage {
 	queue: SessionQueueState;
 }
 
+/** Per-session tool approval: `ask` confirms mutating tools, `auto` runs them. */
+export type ApprovalMode = "ask" | "auto";
+
 export interface SessionSummary {
 	sessionId: string;
 	workspaceId: string;
 	title: string;
 	model: WireModel | null;
 	thinkingLevel: ThinkingLevel;
+	/** `ask` confirms mutating tools before they run; `auto` runs them unattended. */
+	approvalMode: ApprovalMode;
 	isStreaming: boolean;
 	messageCount: number;
 	updatedAt: number;

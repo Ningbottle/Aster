@@ -27,6 +27,7 @@ import {
   replyTarget,
   selectDesktop,
   selectSession,
+  sessionNeedsInput,
   setConnection,
   setSessions,
   setTranscript,
@@ -59,6 +60,7 @@ function summary(overrides: Partial<SessionSummary> = {}): SessionSummary {
     title: 'Session',
     model: null,
     thinkingLevel: 'medium',
+    approvalMode: 'auto',
     isStreaming: false,
     messageCount: 2,
     updatedAt: 10,
@@ -292,9 +294,29 @@ describe('session state', () => {
     message.content = [{ type: 'toolCall', id: 'q1', name: 'ask_user_question', arguments: args }];
     state = applyPiEvent(state, { sessionId: 's1', event: { type: 'message_end', message } });
     state = applySessionState(state, stateRecord({ needsInput: { kind: 'question', interactionId: 'question:q1' } }));
-    expect(selectDesktop(state).pendingQuestion).toEqual({ toolCallId: 'q1', args });
+    expect(selectDesktop(state).pendingQuestion).toEqual({ toolCallId: 'q1', args, invalid: false });
     state = applySessionState(state, stateRecord({ needsInput: null }));
     expect(selectDesktop(state).pendingQuestion).toBeNull();
+  });
+
+  test('keeps an unreadable question visible as a cancel-only target', () => {
+    let state = prepared();
+    const message = assistant('');
+    message.content = [{
+      type: 'toolCall',
+      id: 'q1',
+      name: 'ask_user_question',
+      arguments: { questions: [{ header: 'Target', question: 'Which?', options: 42 }] },
+    }];
+    state = applyPiEvent(state, { sessionId: 's1', event: { type: 'message_end', message } });
+    state = applySessionState(state, stateRecord({ needsInput: { kind: 'question', interactionId: 'question:q1' } }));
+
+    expect(selectDesktop(state).pendingQuestion).toEqual({
+      toolCallId: 'q1',
+      args: { questions: [] },
+      invalid: true,
+    });
+    expect(isPendingQuestionTarget(state, 's1', 'q1')).toBe(true);
   });
 });
 
@@ -331,6 +353,25 @@ describe('extension dialogs', () => {
 
     state = clearDialog(state, 's1', 'ask-1');
     expect(selectDesktop(state).pendingInput).toBeNull();
+  });
+
+  test('a session blocked on a dialog or question reports needsInput', () => {
+    let state = prepared();
+    expect(sessionNeedsInput(state, 's1')).toBe(false);
+
+    state = applyExtensionUi(state, selectRequest);
+    expect(sessionNeedsInput(state, 's1')).toBe(true);
+    state = clearDialog(state, 's1', selectRequest.id);
+    expect(sessionNeedsInput(state, 's1')).toBe(false);
+
+    state = applySessionState(state, stateRecord({
+      needsInput: { kind: 'question', interactionId: 'question:q1' },
+    }));
+    expect(sessionNeedsInput(state, 's1')).toBe(true);
+    expect(sessionNeedsInput(state, 's2')).toBe(false);
+
+    state = applySessionState(state, stateRecord({ needsInput: null }));
+    expect(sessionNeedsInput(state, 's1')).toBe(false);
   });
 
   test('non-dialog extension UI requests are not rendered', () => {

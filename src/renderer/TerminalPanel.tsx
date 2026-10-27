@@ -7,13 +7,14 @@ import {
   INITIAL_TERMINAL_TAB_KEY,
   WS_CHANNELS,
   type TerminalDataPush,
+  type TerminalDetachedPush,
   type TerminalExitPush,
   type TerminalTabInfo,
 } from '@thinkrail/contracts';
 import type { WsClient } from './client';
 import { CdsButton as Button } from './cds/Button';
 
-type TerminalState = 'attaching' | 'ready' | 'exited' | 'failed';
+type TerminalState = 'attaching' | 'ready' | 'exited' | 'failed' | 'detached';
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -39,10 +40,15 @@ export function TerminalPanel({ client, workspaceId, onClose, onError }: {
     const element = host.current;
     if (!element) return;
     let disposed = false;
-    let terminalId: string | null = null;
+    let attachedId: string | null = null;
+    let targetTabKey: string | null = null;
+    let writable = true;
+    let exited = false;
+    let pendingExit: TerminalExitPush | null = null;
     let buffered: TerminalDataPush[] = [];
     let unsubscribeData = () => {};
     let unsubscribeExit = () => {};
+    let unsubscribeDetached = () => {};
     const terminal = new Terminal({
       convertEol: false,
       cursorBlink: true,
@@ -86,24 +92,34 @@ export function TerminalPanel({ client, workspaceId, onClose, onError }: {
     unsubscribeData = client.subscribe(WS_CHANNELS.terminalData, data => {
       const push = data as TerminalDataPush;
       if (typeof push?.id !== 'string' || typeof push.data !== 'string') return;
-      if (terminalId === null) { buffered.push(push); return; }
-      if (push.id !== terminalId) return;
+      if (attachedId === null) { buffered.push(push); return; }
+      if (push.id !== attachedId || !writable) return;
       terminal.write(push.data);
     });
     unsubscribeExit = client.subscribe(WS_CHANNELS.terminalExit, data => {
       const push = data as TerminalExitPush;
-      if (typeof push?.id !== 'string' || push.id !== terminalId) return;
-      terminalId = null;
+      if (typeof push?.id !== 'string') return;
+      if (attachedId === null) { pendingExit = push; return; }
+      if (push.id !== attachedId) return;
+      exited = true;
+      writable = false;
       setStatus('exited');
       setExitCode(typeof push.exitCode === 'number' ? push.exitCode : null);
     });
+    unsubscribeDetached = client.subscribe(WS_CHANNELS.terminalDetached, data => {
+      const push = data as TerminalDetachedPush;
+      if (exited || push?.workspaceId !== workspaceId || targetTabKey === null || push.tabKey !== targetTabKey) return;
+      writable = false;
+      setStatus('detached');
+      terminal.write('\r\n\x1b[33mDetached: another window took over this terminal.\x1b[0m\r\n');
+    });
     const input = terminal.onData(data => {
-      if (!terminalId) return;
-      void client.request('terminal.write', { id: terminalId, data }).catch(error => reportError.current(errorMessage(error)));
+      if (!attachedId || !writable) return;
+      void client.request('terminal.write', { id: attachedId, data }).catch(error => reportError.current(errorMessage(error)));
     });
     const resize = terminal.onResize(({ cols, rows }) => {
-      if (!terminalId) return;
-      void client.request('terminal.resize', { id: terminalId, cols, rows }).catch(error => reportError.current(errorMessage(error)));
+      if (!attachedId || !writable) return;
+      void client.request('terminal.resize', { id: attachedId, cols, rows }).catch(error => reportError.current(errorMessage(error)));
     });
     const observer = new ResizeObserver(() => {
       try { fit.fit(); } catch { /* the element can be hidden while the panel closes */ }
@@ -122,14 +138,26 @@ export function TerminalPanel({ client, workspaceId, onClose, onError }: {
         }
         if (disposed) return;
         const tab = tabs[0];
+        targetTabKey = tab.tabKey;
         const attached = await client.request('terminal.attach', {
           workspaceId, tabKey: tab.tabKey, title: tab.title, cols: terminal.cols, rows: terminal.rows,
         });
         if (disposed) return;
-        terminalId = attached.id;
+        attachedId = attached.id;
         if (attached.replay) terminal.write(attached.replay);
-        for (const push of buffered) if (push.id === terminalId) terminal.write(push.data);
+        for (const push of buffered) if (push.id === attachedId) terminal.write(push.data);
         buffered = [];
+        const exitBeforeAttach = pendingExit as TerminalExitPush | null;
+        if (exitBeforeAttach?.id === attachedId) {
+          exited = true;
+          writable = false;
+          setStatus('exited');
+          setExitCode(typeof exitBeforeAttach.exitCode === 'number' ? exitBeforeAttach.exitCode : null);
+          pendingExit = null;
+          return;
+        }
+        pendingExit = null;
+        if (!writable) { setStatus('detached'); return; }
         setStatus('ready');
         terminal.focus();
       } catch (error) {
@@ -148,6 +176,7 @@ export function TerminalPanel({ client, workspaceId, onClose, onError }: {
       resize.dispose();
       unsubscribeData();
       unsubscribeExit();
+      unsubscribeDetached();
       terminal.dispose();
     };
   }, [client, workspaceId]);
@@ -157,7 +186,7 @@ export function TerminalPanel({ client, workspaceId, onClose, onError }: {
       <span className="terminal-title">Terminal</span>
       <span className={`terminal-status is-${status}`} role="status">
         {status === 'attaching' ? 'Connecting…' : status === 'failed' ? 'Unavailable'
-          : status === 'exited' ? `Exited${exitCode === null ? '' : ` (${exitCode})`}` : 'Running'}
+          : status === 'exited' ? `Exited${exitCode === null ? '' : ` (${exitCode})`}` : status === 'detached' ? 'Detached' : 'Running'}
       </span>
       <Button variant="ghost" size="icon" className="icon-button" aria-label="Close terminal" title="Close terminal" onClick={onClose}><X size={14} /></Button>
     </header>

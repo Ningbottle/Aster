@@ -22,6 +22,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import type {
 	AgentSettlement,
+	ApprovalMode,
 	AskUserQuestionResult,
 	ImageContent,
 	Model,
@@ -55,6 +56,7 @@ import {
 	TODO_REVIEW_FIX_CUSTOM_TYPE,
 } from "@thinkrail/contracts";
 import { CodedError } from "@thinkrail/shared/codedError";
+import { createApprovalGateExtension } from "./approvalGate";
 import { usageAccumulator, usageRequest } from "./usageStats";
 import {
 	type BackgroundCommands,
@@ -177,6 +179,18 @@ interface Entry {
 }
 
 const sessions = new Map<string, Entry>();
+/** Per-session tool approval. Live hosts keep it in memory; a restart falls back to `auto`. */
+const approvalModes = new Map<string, ApprovalMode>();
+
+function approvalModeOf(sessionId: string): ApprovalMode {
+	return approvalModes.get(sessionId) ?? "auto";
+}
+
+/** Switches tool approval for a live session; the gate extension reads this on every call. */
+export function setSessionApproval(sessionId: string, mode: ApprovalMode): void {
+	if (!sessions.has(sessionId)) throw new Error(`Unknown session: ${sessionId}`);
+	approvalModes.set(sessionId, mode);
+}
 let sessionLifecycleGeneration = 0;
 const workspaceLifecycleGenerations = new Map<string, number>();
 const closingWorkspaces = new Map<string, number>();
@@ -1368,6 +1382,7 @@ async function createParentSessionInternal(
 				[
 					subagents.extension,
 					createBackgroundCommandsExtension({ service: commands }),
+					createApprovalGateExtension(() => approvalModeOf(sessionId)),
 					...mcpHost.extensions,
 				],
 			),
@@ -1446,6 +1461,7 @@ function summaryOf(sessionId: string, entry: Entry): SessionSummary {
 			? sessionWireModel(session.model as unknown as Model<string>, entry.generation)
 			: null,
 		thinkingLevel: session.thinkingLevel,
+		approvalMode: approvalModeOf(sessionId),
 		isStreaming: session.isStreaming,
 		messageCount: session.messages.length,
 		updatedAt: Date.now(),
@@ -1577,6 +1593,7 @@ async function listSessionsInternal(workspaceId: string, cwd: string): Promise<S
 			title: info.name ?? "",
 			model: null,
 			thinkingLevel: "medium" as ThinkingLevel,
+			approvalMode: "auto" as ApprovalMode,
 			isStreaming: false,
 			messageCount: info.messageCount,
 			updatedAt: info.modified.getTime(),
@@ -2692,6 +2709,7 @@ function disposeSession(sessionId: string): Promise<void> {
 	entry.unsubscribeCommands();
 	clearEntryQueue(entry);
 	sessions.delete(sessionId);
+	approvalModes.delete(sessionId);
 	disposePiSessionAfterShutdown(entry);
 	publishSessionResourcesChanged(entry.workspaceId, sessionId);
 	log.debug(`session ${sessionId} disposed`);

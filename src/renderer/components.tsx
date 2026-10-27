@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { ArrowDown, Asterisk, CaretDown, Check, CircleNotch, FolderSimple, WarningCircle, X } from '@phosphor-icons/react';
-import type { ThinkingLevel, WireModel } from '@thinkrail/contracts';
+import { ArrowDown, Asterisk, CircleNotch, WarningCircle, X } from '@phosphor-icons/react';
+import type { ApprovalMode, ThinkingLevel, WireModel } from '@thinkrail/contracts';
 import type { DesktopView } from './desktop-state';
 import type { UiContent, UiDialogRequest, UiImage, UiMessage, UiToolActivity } from './model';
 import { CdsButton as Button } from './cds/Button';
@@ -13,93 +13,41 @@ import { RichText } from './RichText';
 import { TerminalPanel } from './TerminalPanel';
 import type { WsClient } from './client';
 import { HomeUsage } from './HomeUsage';
+import { useModalFocus } from './modal-focus';
+import { distanceFromBottom, isPinned, shouldFollow, showsJump } from './scroll-follow';
 
-export function CodeWorkspace({ view, client, terminalOpen, onCloseTerminal, onReportError, onChooseProject, onNewSession, onSend, onAbort, onRelease, onSetModel, onSetThinking, onOpenFile, onOpenExternal, onOpenDetails, pending, error, onDismissError }: {
+export function CodeWorkspace({ view, client, terminalOpen, onCloseTerminal, onReportError, onChooseProject, onSend, onAbort, onSetApproval, onSetModel, onSetThinking, onOpenFile, onOpenExternal, onOpenDetails, pending, error, onDismissError }: {
   view: DesktopView; client: WsClient; terminalOpen: boolean; onCloseTerminal: () => void; onReportError: (message: string) => void;
-  onChooseProject: () => void; onNewSession: (projectId?: string) => void;
-  onSend: (text: string, images: UiImage[]) => Promise<boolean>; onAbort: () => void; onRelease: () => void;
+  onChooseProject: () => void;
+  onSend: (text: string, images: UiImage[]) => Promise<boolean>; onAbort: () => void; onSetApproval: (mode: ApprovalMode) => void;
   onSetModel: (model: WireModel) => void; onSetThinking: (level: ThinkingLevel) => void;
   onOpenFile: (path: string) => void; onOpenExternal: (url: string) => void; onOpenDetails: () => void;
   pending: boolean; error: string | null; onDismissError: () => void;
 }) {
   const hasMessages = !!view.activeSession?.messages.length;
+  const awaitingInput = !!view.pendingInput || !!view.pendingQuestion;
   return <main className={`workspace ${hasMessages ? 'has-transcript' : 'is-empty'}`}>
     <div className={`workspace-body ${hasMessages ? 'has-transcript' : 'is-empty'}`}>
       <div className="error-slot">{error && <div className="error-banner" role="alert"><WarningCircle size={15} /><span>{error}</span><Button variant="ghost" size="icon" className="icon-button" onClick={onDismissError} aria-label="Dismiss error"><X size={14} /></Button></div>}</div>
       {hasMessages
         ? <div className="conversation-region"><ConversationView view={view} onOpenFile={onOpenFile} onOpenExternal={onOpenExternal} /></div>
-        : <NewSessionHome view={view} client={client} onChooseProject={onChooseProject} onNewSession={onNewSession} pending={pending} />}
+        : <NewSessionHome view={view} client={client} />}
       {terminalOpen && view.activeSession?.workspace && <TerminalPanel client={client} workspaceId={view.activeSession.workspace.id} onClose={onCloseTerminal} onError={onReportError} />}
       <div className="composer-slot is-docked">
         <div className="composer-column">
-          <PromptComposer view={view} onChooseProject={onChooseProject} onSend={onSend} onAbort={onAbort} onRelease={onRelease} onSetModel={onSetModel} onSetThinking={onSetThinking} onOpenDetails={onOpenDetails} pending={pending} />
+          <PromptComposer view={view} onChooseProject={onChooseProject} onSend={onSend} onAbort={onAbort} onSetApproval={onSetApproval} onSetModel={onSetModel} onSetThinking={onSetThinking} onOpenDetails={onOpenDetails} pending={pending} awaitingInput={awaitingInput} />
         </div>
       </div>
     </div>
   </main>;
 }
 
-const ENVIRONMENT_ROWS = 4;
-
-/** Home activity and real project environments share the new-session content column. */
-function NewSessionHome({ view, client, onChooseProject, onNewSession, pending }: {
-  view: DesktopView; client: WsClient; onChooseProject: () => void; onNewSession: (projectId?: string) => void; pending: boolean;
-}) {
-  const [menuOpen, setMenuOpen] = useState(false);
-  const footer = useRef<HTMLDivElement>(null);
-  const currentProject = view.activeSession?.project ?? null;
-  const visibleProjects = view.projects.slice(0, ENVIRONMENT_ROWS);
-  useEffect(() => {
-    if (!menuOpen) return;
-    const outside = (event: PointerEvent) => { if (!footer.current?.contains(event.target as Node)) setMenuOpen(false); };
-    const escape = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape') return;
-      event.preventDefault();
-      footer.current?.querySelector<HTMLButtonElement>('.env-choose')?.focus();
-      setMenuOpen(false);
-    };
-    document.addEventListener('pointerdown', outside);
-    document.addEventListener('keydown', escape);
-    return () => { document.removeEventListener('pointerdown', outside); document.removeEventListener('keydown', escape); };
-  }, [menuOpen]);
+/** Home activity shares the new-session content column. */
+function NewSessionHome({ view, client }: { view: DesktopView; client: WsClient }) {
   return <div className="landing-stage">
     <div className="home-overview">
       <h1 className="home-greeting"><Asterisk size={22} aria-hidden="true" /><span>What’s up next?</span></h1>
       <HomeUsage client={client} connection={view.connection} booting={view.booting} />
-    <div className="landing-env">
-      <div className="env-card">
-        {visibleProjects.length > 0 && <div className="env-list" aria-label="Project environments">
-          {visibleProjects.map(project => {
-            const current = currentProject?.id === project.id;
-            return <button type="button" key={project.id} className={`env-row ${current ? 'is-current' : ''}`} title={project.path}
-              aria-current={current ? 'true' : undefined} disabled={pending}
-              onClick={() => { if (!current) onNewSession(project.id); }}>
-              <FolderSimple size={16} />
-              <span className="env-row-name">{project.name}</span>
-              {current && <Check className="env-row-check" size={15} />}
-            </button>;
-          })}
-        </div>}
-        {visibleProjects.length === 0 && <div className="env-empty">
-          <p>Open a project folder to start.</p>
-          <Button variant="secondary" size="sm" onClick={onChooseProject} disabled={pending}><FolderSimple size={16} />Open folder</Button>
-        </div>}
-        {visibleProjects.length > 0 && <div className="env-footer" ref={footer}>
-          <Button variant="ghost" size="sm" className="env-choose" aria-haspopup="menu" aria-expanded={menuOpen} disabled={pending} onClick={() => setMenuOpen(value => !value)}>
-            <span className="env-choose-label">Choose environment</span><CaretDown size={13} />
-          </Button>
-          {menuOpen && <div className="popover env-menu" role="menu" aria-label="Environments">
-            {view.projects.map(project => <Button variant="ghost" size="xs" role="menuitem" key={project.id} className="menu-row project-menu-row" title={project.path} onClick={() => { setMenuOpen(false); if (currentProject?.id !== project.id) onNewSession(project.id); }}>
-              <FolderSimple size={16} /><span>{project.name}</span>{currentProject?.id === project.id && <Check size={13} />}
-            </Button>)}
-            <div className="menu-separator" role="separator" />
-            <Button variant="ghost" size="xs" role="menuitem" className="menu-row" onClick={() => { setMenuOpen(false); onChooseProject(); }}>
-              <FolderSimple size={16} /><span>Open folder…</span>
-            </Button>
-          </div>}
-        </div>}
-      </div>
-    </div>
     </div>
   </div>;
 }
@@ -107,12 +55,20 @@ function NewSessionHome({ view, client, onChooseProject, onNewSession, pending }
 /** Scroll offsets survive switching sessions; the conversation unmounts while an empty session is shown. */
 const conversationPositions = new Map<string, { top: number; pinned: boolean }>();
 
+/*
+ * Adapted from Caho1/open-claude-ui, code-examples/useClaudeScrollPinning.ts,
+ * MIT, commit c1f923ae0051a871941b98a0e2e3183a545e6a85. Thresholds and the
+ * gesture cooldown live in ./scroll-follow so they can be tested without a DOM.
+ */
+const SCROLL_FADE_SIZE = 28;
+
 function ConversationView({ view, onOpenFile, onOpenExternal }: { view: DesktopView; onOpenFile: (path: string) => void; onOpenExternal: (url: string) => void }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const pinned = useRef(true);
+  const lastGesture = useRef(0);
   const viewport = useRef({ width: 0, height: 0 });
   const [showJump, setShowJump] = useState(false);
-  const [scrolled, setScrolled] = useState(false);
+  const [fade, setFade] = useState({ top: false, bottom: false });
   const messages = view.activeSession?.messages ?? [];
   const tools = view.activeSession?.tools ?? [];
   const sessionId = view.activeSession?.session.sessionId ?? '';
@@ -121,18 +77,26 @@ function ConversationView({ view, onOpenFile, onOpenExternal }: { view: DesktopV
   const liveTools = new Map(tools.map(tool => [tool.id, tool]));
   for (const [id, result] of nativeResults) liveTools.set(id, { ...liveTools.get(id), ...result, arguments: liveTools.get(id)?.arguments ?? result.arguments });
   const nativeResultIds = new Set(nativeResults.keys());
+  /** Both edge fades stay dormant at the matching edge; only the clipped side feathers. */
+  const syncFades = (element: HTMLElement) => {
+    const top = element.scrollTop > 2;
+    const bottom = distanceFromBottom(element) > 2;
+    setFade(current => current.top === top && current.bottom === bottom ? current : { top, bottom });
+  };
   useEffect(() => {
     const el = scrollRef.current;
-    if (el && pinned.current) el.scrollTop = el.scrollHeight;
+    if (!el || !shouldFollow(pinned.current, lastGesture.current, performance.now())) return;
+    el.scrollTop = el.scrollHeight;
   }, [messages, tools, view.runtime.status]);
   useLayoutEffect(() => {
     const el = scrollRef.current;
     if (!el || !sessionId) return;
     const saved = conversationPositions.get(sessionId);
     pinned.current = saved?.pinned ?? true;
+    lastGesture.current = 0;
     el.scrollTop = pinned.current ? el.scrollHeight : saved?.top ?? el.scrollHeight;
-    setShowJump(!pinned.current);
-    setScrolled(el.scrollTop > 4);
+    setShowJump(showsJump(distanceFromBottom(el)));
+    syncFades(el);
   }, [sessionId]);
   useEffect(() => {
     const el = scrollRef.current;
@@ -145,19 +109,21 @@ function ConversationView({ view, onOpenFile, onOpenExternal }: { view: DesktopV
     observer.observe(el);
     return () => observer.disconnect();
   }, []);
+  const markGesture = () => { lastGesture.current = performance.now(); };
   const onScroll = () => {
     const el = scrollRef.current;
     if (!el) return;
     const resized = viewport.current.width !== el.clientWidth || viewport.current.height !== el.clientHeight;
     if (resized && pinned.current) el.scrollTop = el.scrollHeight;
     viewport.current = { width: el.clientWidth, height: el.clientHeight };
-    pinned.current = el.scrollHeight - el.scrollTop - el.clientHeight < 56;
+    const distance = distanceFromBottom(el);
+    pinned.current = isPinned(distance);
     if (sessionId) conversationPositions.set(sessionId, { top: el.scrollTop, pinned: pinned.current });
-    setShowJump(!pinned.current);
-    setScrolled(el.scrollTop > 4);
+    setShowJump(showsJump(distance));
+    syncFades(el);
   };
   return <>
-    <div className="conversation-scroll" ref={scrollRef} onScroll={onScroll} aria-label="Conversation">
+    <div className="conversation-scroll" ref={scrollRef} onScroll={onScroll} onWheel={markGesture} onTouchStart={markGesture} onKeyDown={markGesture} aria-label="Conversation">
       <div className="conversation-column">
         {messages.map((message, index) => <MessageRow key={`${message.timestamp}-${index}`} message={message} tools={liveTools} messageToolIds={messageToolIds} thinkingLive={!!view.activeSession?.streaming && index === messages.length - 1} onOpenFile={onOpenFile} onOpenExternal={onOpenExternal} />)}
         {tools.filter(tool => !messageToolIds.has(tool.id) && !nativeResultIds.has(tool.id)).map(tool => <ToolCard key={tool.id} tool={tool} onOpenFile={onOpenFile} />)}
@@ -166,9 +132,10 @@ function ConversationView({ view, onOpenFile, onOpenExternal }: { view: DesktopV
         {view.runtime.status === 'stop-requested' && <div className="runtime-notice"><CircleNotch className="spin" size={15} /><span>Stop requested. Waiting for Pi to settle the session…</span></div>}
         {view.runtime.status === 'working' && <div className="stream-indicator"><span /><span /><span />Generating</div>}
       </div>
-      {showJump && <Button variant="ghost" size="xs" className="jump-latest" onClick={() => { const el = scrollRef.current; if (el) el.scrollTop = el.scrollHeight; pinned.current = true; setShowJump(false); setScrolled(false); }}><ArrowDown size={14} />Jump to latest</Button>}
     </div>
-    {scrolled && <div className="conversation-fade" aria-hidden="true" />}
+    {showJump && <Button variant="ghost" size="xs" className="jump-latest" onClick={() => { const el = scrollRef.current; if (el) el.scrollTop = el.scrollHeight; pinned.current = true; setShowJump(false); }}><ArrowDown size={14} />Jump to latest</Button>}
+    <div className="conversation-fade top" style={{ height: fade.top ? SCROLL_FADE_SIZE : 0 }} aria-hidden="true" />
+    <div className="conversation-fade bottom" style={{ height: fade.bottom ? SCROLL_FADE_SIZE : 0 }} aria-hidden="true" />
   </>;
 }
 
@@ -246,7 +213,13 @@ const dialogInputStyle = {
 /** A Pi extension dialog: the session stays blocked until this answers or cancels. */
 export function ExtensionDialog({ request, startup, onReply, pending, error }: { request: UiDialogRequest; startup?: boolean; onReply: (value: string | boolean | null) => void; pending: boolean; error?: string | null }) {
   const [text, setText] = useState(request.kind === 'editor' ? request.prefill ?? '' : '');
-  return <div className="modal-scrim" onMouseDown={event => { if (event.target === event.currentTarget && !pending) onReply(null); }}>
+  const layer = useRef<HTMLDivElement>(null);
+  const textEntry = request.kind === 'input' || request.kind === 'editor';
+  useModalFocus(layer, {
+    initialFocusSelector: textEntry ? 'input, textarea' : undefined,
+    fallbackFocusSelector: '[aria-label="Message Aster"]',
+  });
+  return <div className="modal-scrim" ref={layer} onMouseDown={event => { if (event.target === event.currentTarget && !pending) onReply(null); }}>
     <form className="rename-dialog" role="dialog" aria-modal="true" aria-labelledby="extension-dialog-title"
       onKeyDown={event => { if (event.key === 'Escape' && !pending) { event.preventDefault(); onReply(null); } }}
       onSubmit={event => { event.preventDefault(); if (request.kind === 'input' || request.kind === 'editor') onReply(text); }}>

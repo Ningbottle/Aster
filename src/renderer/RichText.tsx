@@ -4,6 +4,9 @@ import remarkGfm from 'remark-gfm';
 import { Check, Copy } from '@phosphor-icons/react';
 import { CdsButton as Button } from './cds/Button';
 
+/** 2.5s matches the reference CodeBlock copy handoff. */
+const COPY_FEEDBACK_MS = 2500;
+
 function safeLinkUrl(href: string | undefined): string | null {
   if (!href) return null;
   const value = href.trim();
@@ -27,7 +30,7 @@ function CodeBlock({ code, language }: { code: string; language: string | null }
     if (!navigator.clipboard) return;
     void navigator.clipboard.writeText(code).then(() => {
       setCopied(true);
-      setTimeout(() => setCopied(false), 1400);
+      setTimeout(() => setCopied(false), COPY_FEEDBACK_MS);
     }, () => setCopied(false));
   }
   return <div className="code-block">

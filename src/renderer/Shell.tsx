@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { ArrowLeft, ArrowRight, Asterisk, CaretDown, ChatCircle, Code, DotsThree, FolderSimple, ListChecks, ListDashes, MagnifyingGlass, Plus, SidebarSimple, TerminalWindow, X } from '@phosphor-icons/react';
+import { ArrowLeft, ArrowRight, Asterisk, CaretDown, ChatCircle, Check, Code, DotsThree, FolderSimple, ListChecks, ListDashes, MagnifyingGlass, Plus, SidebarSimple, TerminalWindow, X } from '@phosphor-icons/react';
 import type { SessionSummary } from '@thinkrail/contracts';
 import type { DesktopView } from './desktop-state';
 import type { RuntimeView } from './model';
 import { CdsButton as Button } from './cds/Button';
+import { useMenuFocus } from './menu-focus';
 
 export function runtimeLabel(runtime: RuntimeView) {
   switch (runtime.status) {
@@ -21,13 +22,19 @@ export function DesktopShell({ children, busy, sidebarOpen }: { children: ReactN
   </div>;
 }
 
-export function TitleBar({ view, onToggleSidebar, onBack, onForward, canBack, canForward, onShowDetails, onOpenFolder, detailsOpen, onRename }: {
+export function TitleBar({ view, onToggleSidebar, onBack, onForward, canBack, canForward, onShowDetails, onOpenFolder, detailsOpen, onRename, onRelease, onSetTrust }: {
   view: DesktopView; onToggleSidebar: () => void; onBack: () => void; onForward: () => void; canBack: boolean; canForward: boolean;
-  onShowDetails: () => void; onOpenFolder: () => void; detailsOpen: boolean; onRename: (session: SessionSummary) => void;
+  onShowDetails: () => void; onOpenFolder: () => void; detailsOpen: boolean; onRename: (session: SessionSummary) => void; onRelease: () => void;
+  onSetTrust: (projectId: string, trusted: boolean) => void;
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [titleMenuOpen, setTitleMenuOpen] = useState(false);
   const titleAnchor = useRef<HTMLDivElement>(null);
+  const sessionMenuAnchor = useRef<HTMLDivElement>(null);
+  const titleMenuPanel = useRef<HTMLDivElement>(null);
+  const sessionMenuPanel = useRef<HTMLDivElement>(null);
+  useMenuFocus(titleMenuOpen ? 'title' : null, titleMenuPanel);
+  useMenuFocus(menuOpen ? 'session' : null, sessionMenuPanel);
   useEffect(() => {
     if (!titleMenuOpen) return;
     const outside = (event: PointerEvent) => { if (!titleAnchor.current?.contains(event.target as Node)) setTitleMenuOpen(false); };
@@ -41,7 +48,22 @@ export function TitleBar({ view, onToggleSidebar, onBack, onForward, canBack, ca
     document.addEventListener('keydown', escape);
     return () => { document.removeEventListener('pointerdown', outside); document.removeEventListener('keydown', escape); };
   }, [titleMenuOpen]);
+  useEffect(() => {
+    if (!menuOpen) return;
+    const outside = (event: PointerEvent) => { if (!sessionMenuAnchor.current?.contains(event.target as Node)) setMenuOpen(false); };
+    const escape = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      event.preventDefault();
+      sessionMenuAnchor.current?.querySelector<HTMLButtonElement>('.chrome-button')?.focus();
+      setMenuOpen(false);
+    };
+    document.addEventListener('pointerdown', outside);
+    document.addEventListener('keydown', escape);
+    return () => { document.removeEventListener('pointerdown', outside); document.removeEventListener('keydown', escape); };
+  }, [menuOpen]);
   const session = view.activeSession?.session;
+  const project = view.activeSession?.project ?? null;
+  const resourcesTrusted = project?.piResourceTrust === 'granted';
   const hasMessages = (view.activeSession?.messages.length ?? 0) > 0;
   const title = session?.title || (hasMessages ? 'Untitled session' : 'New session');
   const working = view.runtime.status === 'working' || view.runtime.status === 'stop-requested';
@@ -54,27 +76,38 @@ export function TitleBar({ view, onToggleSidebar, onBack, onForward, canBack, ca
     </div>
     <div className="pane-title-anchor" ref={titleAnchor}>
       {titled && session
-        ? <button type="button" className="pane-title" aria-haspopup="menu" aria-expanded={titleMenuOpen} onClick={() => setTitleMenuOpen(value => !value)}>
+        ? <button type="button" className="pane-title" aria-haspopup="menu" aria-expanded={titleMenuOpen} onClick={() => { setMenuOpen(false); setTitleMenuOpen(value => !value); }}>
           <span className="pane-title-text">{title}</span><CaretDown size={12} />
         </button>
         : <div className="pane-title new-session-title">New session</div>}
-      {titled && session && titleMenuOpen && <div className="popover title-menu pane-title-menu">
-        <Button variant="ghost" size="xs" className="menu-row" onClick={() => { setTitleMenuOpen(false); onRename(session); }}>Rename session</Button>
-        <Button variant="ghost" size="xs" className="menu-row" onClick={() => { setTitleMenuOpen(false); onShowDetails(); }}>Session details</Button>
+      {titled && session && titleMenuOpen && <div className="popover title-menu pane-title-menu" role="menu" aria-label="Session" ref={titleMenuPanel}>
+        <Button variant="ghost" size="xs" role="menuitem" className="menu-row" onClick={() => { setTitleMenuOpen(false); onRename(session); }}>Rename session</Button>
+        <Button variant="ghost" size="xs" role="menuitem" className="menu-row" onClick={() => { setTitleMenuOpen(false); onShowDetails(); }}>Session details</Button>
         <div className="menu-separator" role="separator" />
-        <Button variant="ghost" size="xs" className="menu-row" onClick={() => { setTitleMenuOpen(false); onOpenFolder(); }}><FolderSimple size={14} />Open project folder</Button>
+        <Button variant="ghost" size="xs" role="menuitem" className="menu-row" onClick={() => { setTitleMenuOpen(false); onOpenFolder(); }}><FolderSimple size={14} />Open project folder</Button>
       </div>}
     </div>
     <div className="pane-actions">
       {titled && <Button variant="ghost" size="icon" className={`chrome-button ${detailsOpen ? 'is-active' : ''}`} aria-label="Session details" title="Session details" aria-pressed={detailsOpen} onClick={onShowDetails}><ListChecks size={17} /></Button>}
       {view.activeSession?.workspace && <Button variant="ghost" size="icon" className="chrome-button" title="Open project folder" aria-label="Open project folder" onClick={onOpenFolder}><FolderSimple size={17} /></Button>}
-      {titled && <div className="title-menu-anchor"><Button variant="ghost" size="icon" className="chrome-button" aria-label="Session menu" aria-expanded={menuOpen} onClick={() => setMenuOpen(value => !value)}><DotsThree size={18} weight="bold" /></Button>
-        {menuOpen && <div className="popover title-menu" onKeyDown={event => { if (event.key === 'Escape') setMenuOpen(false); }}>
-          <Button variant="ghost" size="xs" className="menu-row" aria-label="Rename session" onClick={() => { setMenuOpen(false); onRename(session); }}>Rename session</Button>
-          <Button variant="ghost" size="xs" className="menu-row" onClick={() => { setMenuOpen(false); onOpenFolder(); }}><FolderSimple size={14} />Open project folder</Button>
+      {session && <div className="title-menu-anchor" ref={sessionMenuAnchor}><Button variant="ghost" size="icon" className="chrome-button" aria-label="Session menu" aria-expanded={menuOpen} onClick={() => { setTitleMenuOpen(false); setMenuOpen(value => !value); }}><DotsThree size={18} weight="bold" /></Button>
+        {menuOpen && <div className="popover title-menu" role="menu" aria-label="Session menu" ref={sessionMenuPanel}>
+          <Button variant="ghost" size="xs" role="menuitem" className="menu-row" aria-label="Rename session" onClick={() => { setMenuOpen(false); onRename(session); }}>Rename session</Button>
+          <Button variant="ghost" size="xs" role="menuitem" className="menu-row" onClick={() => { setMenuOpen(false); onOpenFolder(); }}><FolderSimple size={14} />Open project folder</Button>
           <div className="menu-separator" role="separator" />
           <div className="menu-heading">Runtime</div>
           <p className="menu-status">{runtimeLabel(view.runtime)}</p>
+          {project && <>
+            <div className="menu-separator" role="separator" />
+            <Button variant="ghost" size="xs" role="menuitemcheckbox" aria-checked={resourcesTrusted} className="menu-row" onClick={() => { setMenuOpen(false); onSetTrust(project.id, !resourcesTrusted); }}>
+              <span className="menu-check">{resourcesTrusted && <Check size={13} />}</span>
+              Trust project resources
+            </Button>
+            <p className="menu-footnote">Loads .pi settings, skills, MCP and extensions. Does not sandbox tools.</p>
+          </>}
+          <div className="menu-separator" role="separator" />
+          <Button variant="ghost" size="xs" role="menuitem" className="menu-row danger" onClick={() => { setMenuOpen(false); onRelease(); }}><X size={14} />Release session</Button>
+          <p className="menu-footnote">Release unloads the session runtime; the transcript stays on disk.</p>
         </div>}
       </div>}
     </div>
@@ -89,6 +122,22 @@ export function SessionSidebar({ view, onChooseProject, onNewSession, onOpenSess
   const [searching, setSearching] = useState(false);
   const [query, setQuery] = useState('');
   const [moreOpen, setMoreOpen] = useState(false);
+  const moreAnchor = useRef<HTMLDivElement>(null);
+  const morePanel = useRef<HTMLDivElement>(null);
+  useMenuFocus(moreOpen ? 'more' : null, morePanel);
+  useEffect(() => {
+    if (!moreOpen) return;
+    const outside = (event: PointerEvent) => { if (!moreAnchor.current?.contains(event.target as Node)) setMoreOpen(false); };
+    const escape = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      event.preventDefault();
+      moreAnchor.current?.querySelector<HTMLButtonElement>('.nav-item')?.focus();
+      setMoreOpen(false);
+    };
+    document.addEventListener('pointerdown', outside);
+    document.addEventListener('keydown', escape);
+    return () => { document.removeEventListener('pointerdown', outside); document.removeEventListener('keydown', escape); };
+  }, [moreOpen]);
   const activeId = view.activeSession?.session.sessionId;
   const working = view.runtime.status === 'working' || view.runtime.status === 'stop-requested';
   const projectOf = (session: SessionSummary) => view.workspaces.find(workspace => workspace.id === session.workspaceId)?.projectId;
@@ -107,10 +156,10 @@ export function SessionSidebar({ view, onChooseProject, onNewSession, onOpenSess
     <nav className="primary-nav" aria-label="Code navigation">
       <Button variant="ghost" size="xs" className={`nav-item new-session-action ${newSessionCurrent ? 'is-current' : ''}`} aria-label="New session" aria-current={newSessionCurrent ? 'page' : undefined} onClick={() => view.projects.length ? onNewSession() : onChooseProject()} disabled={pending}><Plus size={17} /><span>New</span></Button>
       <Button variant="ghost" size="xs" className="nav-item" onClick={onChooseProject} disabled={pending}><FolderSimple size={16} /><span>Open folder</span></Button>
-      <div className="sidebar-more-anchor"><Button variant="ghost" size="xs" className="nav-item" aria-expanded={moreOpen} onClick={() => setMoreOpen(value => !value)}><DotsThree size={17} /><span>More</span></Button>
-        {moreOpen && <div className="popover sidebar-more">
-          <Button variant="ghost" size="xs" className="menu-row" aria-pressed={terminalOpen} disabled={!view.activeSession?.workspace} onClick={() => { setMoreOpen(false); onToggleTerminal(); }}><TerminalWindow size={15} />Terminal</Button>
-          <Button variant="ghost" size="xs" className="menu-row" onClick={() => { setMoreOpen(false); onShowDetails(); }}><ListChecks size={15} />Session and runtime</Button>
+      <div className="sidebar-more-anchor" ref={moreAnchor}><Button variant="ghost" size="xs" className="nav-item" aria-expanded={moreOpen} onClick={() => setMoreOpen(value => !value)}><DotsThree size={17} /><span>More</span></Button>
+        {moreOpen && <div className="popover sidebar-more" role="menu" aria-label="More" ref={morePanel}>
+          <Button variant="ghost" size="xs" role="menuitem" className="menu-row" aria-pressed={terminalOpen} disabled={!view.activeSession?.workspace} onClick={() => { setMoreOpen(false); onToggleTerminal(); }}><TerminalWindow size={15} />Terminal</Button>
+          <Button variant="ghost" size="xs" role="menuitem" className="menu-row" onClick={() => { setMoreOpen(false); onShowDetails(); }}><ListChecks size={15} />Session and runtime</Button>
         </div>}
       </div>
     </nav>
