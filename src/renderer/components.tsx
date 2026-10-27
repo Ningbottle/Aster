@@ -35,7 +35,7 @@ export function CodeWorkspace({ view, client, terminalOpen, onCloseTerminal, onR
       {terminalOpen && view.activeSession?.workspace && <TerminalPanel client={client} workspaceId={view.activeSession.workspace.id} onClose={onCloseTerminal} onError={onReportError} />}
       <div className="composer-slot is-docked">
         <div className="composer-column">
-          <PromptComposer view={view} onChooseProject={onChooseProject} onSend={onSend} onAbort={onAbort} onSetApproval={onSetApproval} onSetModel={onSetModel} onSetThinking={onSetThinking} onOpenDetails={onOpenDetails} pending={pending} awaitingInput={awaitingInput} />
+          <PromptComposer view={view} client={client} onChooseProject={onChooseProject} onSend={onSend} onAbort={onAbort} onSetApproval={onSetApproval} onSetModel={onSetModel} onSetThinking={onSetThinking} onOpenDetails={onOpenDetails} pending={pending} awaitingInput={awaitingInput} />
         </div>
       </div>
     </div>

@@ -27,6 +27,9 @@
 .usage-day.future { background: var(--line); }
 .usage-day.out-of-range { background: var(--pressed); opacity: .5; }
 .usage-state { min-height: 220px; display: grid; place-content: center; gap: 8px; color: var(--text-3); text-align: center; }
+/* Loading placeholders keep the metrics row and the heatmap footprint. */
+.usage-skeleton-metric { height: 44px; }
+.usage-skeleton-heat { height: 120px; margin-top: 6px; }
 .usage-state p { margin: 0; }
 .usage-state button { justify-self: center; padding: 5px 11px; border-radius: 5px; background: var(--pressed); color: var(--text-1); cursor: pointer; }
 .usage-state button:hover { background: var(--selected); }

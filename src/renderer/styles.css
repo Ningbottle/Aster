@@ -426,6 +426,10 @@ button:disabled { cursor: default; }
 .access-menu .menu-row { align-items: flex-start; }
 .access-menu .menu-check { margin-top: 2px; }
 .add-menu { left: 0; width: 184px; }
+/* File references reuse the command panel but need room for paths. */
+.mention-menu { width: 320px; }
+.mention-menu .menu-row { justify-content: flex-start; gap: 6px; }
+.mention-path { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
 .usage-card { width: 322px; padding: 9px 12px 8px; }
 .usage-card:focus { outline: none; }
 .usage-card-heading { font-size: 13px; font-weight: 500; color: var(--text-1); }
@@ -451,6 +455,11 @@ button:disabled { cursor: default; }
 .menu-sub { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-3); font-size: 11.5px; }
 .menu-footnote { margin: 4px 8px 2px; color: var(--text-3); font-size: 11.5px; line-height: 1.45; }
 .menu-status { margin: 0; padding: 0 8px 4px; color: var(--text-2); font-size: 12px; }
+.status-indicator { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
+.status-indicator-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: inherit; }
+/* Reference skeleton sheen; cds-skeleton-sweep lives in cds/theme.css. */
+.cds-skeleton { position: relative; overflow: hidden; border-radius: 4px; background: var(--pressed); }
+.cds-skeleton-band { position: absolute; inset: 0; background: linear-gradient(105deg, transparent 35%, rgba(255, 255, 255, .55) 50%, transparent 65%); animation: cds-skeleton-sweep 2s linear infinite; }
 
 /* Details */
 .details-panel { grid-column: 3; grid-row: 2; display: flex; flex-direction: column; gap: 8px; min-height: 0; overflow-y: auto; padding: 17px 18px 18px 2px; background: var(--canvas); }

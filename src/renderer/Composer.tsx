@@ -5,11 +5,13 @@ import {
   IMAGE_MAX_BASE64_BYTES,
   base64EncodedLength,
   type ApprovalMode,
+  type FileNode,
   type SlashCommandInfo,
   type ThinkingLevel,
   type WireModel,
 } from '@thinkrail/contracts';
 import type { DesktopView } from './desktop-state';
+import type { WsClient } from './client';
 import type { UiImage } from './model';
 import { CdsButton as Button } from './cds/Button';
 import { ComposerFrame } from './cds/Composer';
@@ -18,6 +20,8 @@ import { ImageLightbox, imageSource } from './ImageAttachment';
 import { ApiUsageRows, ContextUsageMeter } from './UsageCard';
 import { contextWindowUsage } from './usage';
 import { dismissesCommandMenu, isComposingKey, submitsMessage } from './composer-keys';
+import { filterMentions, mentionAt, mentionInsertion, splitMentionQuery, type MentionToken } from './composer-mentions';
+import { FileIcon } from './FileIcon';
 import { useMenuFocus } from './menu-focus';
 
 type ComposerMenu = 'model' | 'thinking' | 'access' | 'add' | 'usage';
@@ -75,8 +79,8 @@ function readAttachment(file: File, mimeType: string): Promise<ComposerAttachmen
   });
 }
 
-export function PromptComposer({ onChooseProject, view, onSend, onAbort, onSetApproval, onSetModel, onSetThinking, onOpenDetails, pending, awaitingInput }: {
-  view: DesktopView; onChooseProject: () => void; onSend: (text: string, images: UiImage[]) => Promise<boolean>;
+export function PromptComposer({ onChooseProject, view, client, onSend, onAbort, onSetApproval, onSetModel, onSetThinking, onOpenDetails, pending, awaitingInput }: {
+  view: DesktopView; client: WsClient; onChooseProject: () => void; onSend: (text: string, images: UiImage[]) => Promise<boolean>;
   onAbort: () => void; onSetApproval: (mode: ApprovalMode) => void;
   onSetModel: (model: WireModel) => void; onSetThinking: (level: ThinkingLevel) => void; onOpenDetails: () => void; pending: boolean; awaitingInput: boolean;
 }) {
@@ -88,6 +92,9 @@ export function PromptComposer({ onChooseProject, view, onSend, onAbort, onSetAp
   const [dragging, setDragging] = useState(false);
   const [preview, setPreview] = useState<number | null>(null);
   const [menu, setMenu] = useState<ComposerMenu | null>(null);
+  const [mention, setMention] = useState<MentionToken | null>(null);
+  const [mentionFiles, setMentionFiles] = useState<FileNode[]>([]);
+  const [mentionIndex, setMentionIndex] = useState(0);
   const [menuBox, setMenuBox] = useState<{ left: number; bottom: number } | null>(null);
   const textarea = useRef<HTMLTextAreaElement>(null);
   const composing = useRef(false);
@@ -116,6 +123,10 @@ export function PromptComposer({ onChooseProject, view, onSend, onAbort, onSetAp
   const commandMatches = commands?.matches ?? [];
   const showCommands = canEdit && !awaitingInput && commandMatches.length > 0 && dismissedCommand !== draft;
   const activeCommandIndex = showCommands ? Math.min(commandIndex, commandMatches.length - 1) : -1;
+  const workspaceId = view.activeSession?.workspace?.id ?? null;
+  const mentionQuery = mention?.query ?? null;
+  const showMentions = canEdit && !awaitingInput && !showCommands && mentionQuery !== null && mentionFiles.length > 0;
+  const activeMentionIndex = showMentions ? Math.min(mentionIndex, mentionFiles.length - 1) : -1;
   const resize = () => {
     const input = textarea.current;
     if (!input) return;
@@ -137,6 +148,7 @@ export function PromptComposer({ onChooseProject, view, onSend, onAbort, onSetAp
   const changeDraft = (value: string) => {
     setDraft(value);
     storeDraft(value, attachments);
+    setMention(mentionAt(value, textarea.current?.selectionStart ?? value.length));
   };
   const changeAttachments = (update: (current: ComposerAttachment[]) => ComposerAttachment[]) => {
     setAttachments(current => {
@@ -154,6 +166,8 @@ export function PromptComposer({ onChooseProject, view, onSend, onAbort, onSetAp
     setPreview(null);
     setAttachError(null);
     setDismissedCommand(null);
+    setMention(null);
+    setMentionFiles([]);
     const saved = identity ? drafts.current.get(identity) : undefined;
     setDraft(saved?.text ?? '');
     setAttachments(saved?.images ?? []);
@@ -165,6 +179,20 @@ export function PromptComposer({ onChooseProject, view, onSend, onAbort, onSetAp
     if (!showCommands) return;
     region.current?.querySelector<HTMLElement>(`.command-menu [data-command-index="${activeCommandIndex}"]`)?.scrollIntoView({ block: 'nearest' });
   }, [activeCommandIndex, showCommands]);
+  /** File references read one directory per segment; the debounce keeps typing cheap. */
+  useEffect(() => {
+    if (mentionQuery === null || !workspaceId) { setMentionFiles([]); return; }
+    let active = true;
+    const { dir, filter } = splitMentionQuery(mentionQuery);
+    const timer = window.setTimeout(() => {
+      void client.request('fs.readDir', { workspaceId, path: dir }).then(nodes => {
+        if (!active) return;
+        setMentionFiles(filterMentions(nodes, filter));
+        setMentionIndex(0);
+      }, () => { if (active) setMentionFiles([]); });
+    }, 120);
+    return () => { active = false; window.clearTimeout(timer); };
+  }, [mentionQuery, workspaceId, client]);
   useEffect(() => {
     if (!menu) { setMenuBox(null); return; }
     const trigger = triggers.current[menu];
@@ -259,6 +287,24 @@ export function PromptComposer({ onChooseProject, view, onSend, onAbort, onSetAp
     changeDraft(`/${command.name} `);
     textarea.current?.focus();
   }
+  /** Directory picks keep the panel open on the next segment; files close it. */
+  function applyMention(node: FileNode) {
+    if (!mention) return;
+    const caret = textarea.current?.selectionStart ?? draft.length;
+    const insertion = mentionInsertion(node);
+    const next = draft.slice(0, mention.start) + insertion + draft.slice(caret);
+    const end = mention.start + insertion.length;
+    setDraft(next);
+    storeDraft(next, attachments);
+    setMention(node.kind === 'dir' ? mentionAt(next, end) : null);
+    if (node.kind !== 'dir') setMentionFiles([]);
+    requestAnimationFrame(() => {
+      const element = textarea.current;
+      if (!element) return;
+      element.focus();
+      element.setSelectionRange(end, end);
+    });
+  }
   const menuStyle = menuBox
     ? { position: 'fixed' as const, left: menuBox.left, bottom: menuBox.bottom, top: 'auto' as const }
     : { visibility: 'hidden' as const };
@@ -298,6 +344,12 @@ export function PromptComposer({ onChooseProject, view, onSend, onAbort, onSetAp
         onKeyDown={event => {
           const key = { key: event.key, shiftKey: event.shiftKey, isComposing: event.nativeEvent.isComposing, keyCode: event.nativeEvent.keyCode };
           if (isComposingKey(key, composing.current)) return;
+          if (showMentions) {
+            if (event.key === 'ArrowDown') { event.preventDefault(); setMentionIndex(index => (index + 1) % mentionFiles.length); return; }
+            if (event.key === 'ArrowUp') { event.preventDefault(); setMentionIndex(index => (index - 1 + mentionFiles.length) % mentionFiles.length); return; }
+            if (event.key === 'Enter') { event.preventDefault(); const node = mentionFiles[activeMentionIndex]; if (node) applyMention(node); return; }
+            if (event.key === 'Escape') { event.preventDefault(); setMention(null); setMentionFiles([]); return; }
+          }
           if (showCommands) {
             if (event.key === 'ArrowDown') { event.preventDefault(); setCommandIndex(index => (index + 1) % commandMatches.length); return; }
             if (event.key === 'ArrowUp') { event.preventDefault(); setCommandIndex(index => (index - 1 + commandMatches.length) % commandMatches.length); return; }
@@ -367,6 +419,7 @@ export function PromptComposer({ onChooseProject, view, onSend, onAbort, onSetAp
       </div>
     </div>}
     {showCommands && <div className="popover add-menu command-menu" role="listbox" aria-label="Commands">{commandMatches.map((command, index) => <Button variant="ghost" size="xs" role="option" aria-selected={index === activeCommandIndex} data-command-index={index} onMouseEnter={() => setCommandIndex(index)} key={`${command.source}/${command.name}`} className={`menu-row${index === activeCommandIndex ? ' is-active' : ''}`} onClick={() => insertCommand(command)}><span className="menu-check">/</span><span>{command.name}{command.description ? ` · ${command.description}` : ''}</span></Button>)}</div>}
+    {showMentions && <div className="popover add-menu mention-menu" role="listbox" aria-label="Files">{mentionFiles.map((node, index) => <Button variant="ghost" size="xs" role="option" aria-selected={index === activeMentionIndex} key={node.path} onMouseEnter={() => setMentionIndex(index)} className={`menu-row${index === activeMentionIndex ? ' is-active' : ''}`} onClick={() => applyMention(node)}>{node.kind === 'dir' ? <FolderSimple size={14} /> : <FileIcon path={node.path} size={14} />}<span className="mention-path">{node.path}</span></Button>)}</div>}
     {preview !== null && <ImageLightbox images={attachments} startIndex={preview} onClose={() => setPreview(null)} returnFocus={previewOpener} />}
   </div>;
 }

@@ -4,7 +4,18 @@ import type { SessionSummary } from '@thinkrail/contracts';
 import type { DesktopView } from './desktop-state';
 import type { RuntimeView } from './model';
 import { CdsButton as Button } from './cds/Button';
+import { StatusDot, type StatusKind } from './cds/Status';
 import { useMenuFocus } from './menu-focus';
+
+export function runtimeKind(runtime: RuntimeView): StatusKind {
+  switch (runtime.status) {
+    case 'offline':
+    case 'failed': return 'error';
+    case 'working': return 'running';
+    case 'stop-requested': return 'clay';
+    default: return 'ready';
+  }
+}
 
 export function runtimeLabel(runtime: RuntimeView) {
   switch (runtime.status) {
@@ -96,7 +107,7 @@ export function TitleBar({ view, onToggleSidebar, onBack, onForward, canBack, ca
           <Button variant="ghost" size="xs" role="menuitem" className="menu-row" onClick={() => { setMenuOpen(false); onOpenFolder(); }}><FolderSimple size={14} />Open project folder</Button>
           <div className="menu-separator" role="separator" />
           <div className="menu-heading">Runtime</div>
-          <p className="menu-status">{runtimeLabel(view.runtime)}</p>
+          <div className="menu-status"><StatusDot kind={runtimeKind(view.runtime)} label={runtimeLabel(view.runtime)} /></div>
           {project && <>
             <div className="menu-separator" role="separator" />
             <Button variant="ghost" size="xs" role="menuitemcheckbox" aria-checked={resourcesTrusted} className="menu-row" onClick={() => { setMenuOpen(false); onSetTrust(project.id, !resourcesTrusted); }}>
