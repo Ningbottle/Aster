@@ -1451,16 +1451,23 @@ export async function withSessionResources<T>(
 	return operation(entry.commands);
 }
 
+function modelSettingsOf(entry: Entry): Pick<SessionSummary, "model" | "thinkingLevel"> {
+	const { session } = entry;
+	return {
+		model: session.model
+			? sessionWireModel(session.model as unknown as Model<string>, entry.generation)
+			: null,
+		thinkingLevel: session.thinkingLevel,
+	};
+}
+
 function summaryOf(sessionId: string, entry: Entry): SessionSummary {
 	const { session } = entry;
 	return {
 		sessionId,
 		workspaceId: entry.workspaceId,
 		title: session.sessionName ?? "",
-		model: session.model
-			? sessionWireModel(session.model as unknown as Model<string>, entry.generation)
-			: null,
-		thinkingLevel: session.thinkingLevel,
+		...modelSettingsOf(entry),
 		approvalMode: approvalModeOf(sessionId),
 		isStreaming: session.isStreaming,
 		messageCount: session.messages.length,
@@ -2424,6 +2431,11 @@ export async function setSessionModel(sessionId: string, model: WireModel): Prom
 
 export function setSessionThinkingLevel(sessionId: string, level: ThinkingLevel): void {
 	mustGet(sessionId).setThinkingLevel(level);
+}
+
+/** Read the same live Pi projection used by session summaries after a settings mutation. */
+export function getSessionModelSettings(sessionId: string): Pick<SessionSummary, "model" | "thinkingLevel"> {
+	return modelSettingsOf(mustGetEntry(sessionId));
 }
 
 export function getSessionStats(sessionId: string): SessionStats {

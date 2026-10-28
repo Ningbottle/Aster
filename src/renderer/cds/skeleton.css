@@ -1,0 +1,56 @@
+/*
+ * Reference: open-claude-ui docs/v2/03 and docs/v1/Claude Design System (CDS).full.md,
+ * commit c1f923ae0051a871941b98a0e2e3183a545e6a85 (MIT).
+ */
+:where(.aster-skeleton) {
+  position: relative;
+  overflow: hidden;
+  width: 100%;
+  height: 1em;
+  border-radius: 4px;
+  background: var(--cds-skeleton-fill, var(--pressed, rgba(11, 11, 11, 0.075)));
+}
+
+.aster-skeleton-group[data-motion="lockstep"],
+.aster-skeleton[data-motion="lockstep"]:not([data-grouped]) {
+  animation: aster-skeleton-breathe 2s ease-in-out infinite;
+}
+
+.aster-skeleton[data-motion="wave"]::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  transform: translateX(-100%);
+  background: linear-gradient(105deg, transparent 35%, var(--cds-skeleton-sheen, rgba(255, 255, 255, 0.25)) 50%, transparent 65%);
+  animation: aster-skeleton-sweep 2s linear infinite;
+  animation-delay: calc(var(--cds-skel-i, 0) * 90ms);
+}
+
+.aster-skeleton[data-motion="wave"]:dir(rtl)::after {
+  background-image: linear-gradient(255deg, transparent 35%, var(--cds-skeleton-sheen, rgba(255, 255, 255, 0.25)) 50%, transparent 65%);
+}
+
+/* The reference states the lockstep range and period but does not specify easing. */
+@keyframes aster-skeleton-breathe {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
+
+@keyframes aster-skeleton-sweep {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .aster-skeleton-group[data-motion="lockstep"],
+  .aster-skeleton[data-motion="lockstep"]:not([data-grouped]) {
+    animation: none;
+    opacity: 1;
+  }
+
+  .aster-skeleton[data-motion="wave"]::after {
+    animation: none;
+    display: none;
+  }
+}

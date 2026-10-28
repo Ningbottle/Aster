@@ -26,7 +26,12 @@ function recordedTokens(value: unknown): UsageTokens | null {
 	if (!value || typeof value !== "object") return null;
 	const parts = ["input", "output", "cacheRead", "cacheWrite"] as const;
 	if (parts.some(key => typeof Reflect.get(value, key) !== "number" || !Number.isFinite(Reflect.get(value, key)) || Reflect.get(value, key) < 0)) return null;
-	const [input, output, cacheRead, cacheWrite] = parts.map(key => Reflect.get(value, key) as number);
+	const [input, output, cacheRead, cacheWrite] = [
+		Reflect.get(value, parts[0]) as number,
+		Reflect.get(value, parts[1]) as number,
+		Reflect.get(value, parts[2]) as number,
+		Reflect.get(value, parts[3]) as number,
+	] as const;
 	return { input, output, cacheRead, cacheWrite, total: input + output + cacheRead + cacheWrite };
 }
 
@@ -88,7 +93,8 @@ export function usageAccumulator(range: UsageRange, timeZone: string, workspaceC
 				seen.add(key);
 				const activity = daily.get(day) ?? { date: day, tokens: 0, messages: 0 };
 				daily.set(day, activity);
-				if (record.role !== "usage") { result.messages += 1; activity.messages += 1; hours[hour] += 1; }
+				// The h23 formatter returns 0–23, and hours has all 24 initialized buckets.
+				if (record.role !== "usage") { result.messages += 1; activity.messages += 1; hours[hour]! += 1; }
 				if (record.role === "user") continue;
 				if (!record.tokens) { result.coverage.unreportedResponses += 1; continue; }
 				result.totalTokens += record.tokens.total;

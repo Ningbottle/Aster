@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   WS_CHANNELS,
   normalizeSessionTitle,
+  isSessionModelSettingsResult,
   type ApprovalMode,
   type AssistantMessage,
   type AskUserQuestionArgs,
@@ -19,6 +20,7 @@ import {
   type ThinkingLevel,
   type WireModel,
   type Workspace,
+  type WsParams,
 } from '@thinkrail/contracts';
 import { WsClient, type ConnectionStatus } from './client';
 import { parseAskUserQuestionArgs } from './question-schema';
@@ -31,6 +33,7 @@ import {
   type UiMessage,
   type UiToolActivity,
 } from './model';
+import { persistPreference } from './ui-preferences';
 
 export interface SessionTranscript {
   messages: UiMessage[];
@@ -59,6 +62,12 @@ export interface AsterState {
   /** Unfinished extension UI requests per session, in arrival order; the host holds the real pending map. */
   dialogs: Record<string, UiDialogRequest[]>;
   models: WireModel[];
+  /** What a new chat would use when nothing was chosen yet (`model.default`). */
+  defaultModel: WireModel | null;
+  defaultThinking: ThinkingLevel;
+  /** Chosen before any session exists; `session.create` applies it. */
+  draftModel: WireModel | null;
+  draftThinking: ThinkingLevel | null;
   stats: Record<string, SessionStats>;
   selected: Selection | null;
   stopRequested: Record<string, true>;
@@ -116,6 +125,10 @@ export function createAsterState(): AsterState {
     commands: {},
     dialogs: {},
     models: [],
+    defaultModel: null,
+    defaultThinking: 'medium',
+    draftModel: null,
+    draftThinking: null,
     stats: {},
     selected: null,
     stopRequested: {},
@@ -292,6 +305,18 @@ export function setSessionStats(state: AsterState, sessionId: string, stats: Ses
 
 export function installModels(state: AsterState, models: WireModel[]): AsterState {
   return { ...state, models };
+}
+
+/** The host resolves the new-chat model from its own settings; this only mirrors it. */
+export function installModelDefaults(state: AsterState, value: { model: WireModel | null; thinkingLevel: ThinkingLevel }): AsterState {
+  return { ...state, defaultModel: value.model, defaultThinking: value.thinkingLevel };
+}
+
+/** A draft level has to exist on the chosen model, or `session.create` would clamp it silently. */
+export function draftLevelFor(model: WireModel, current: ThinkingLevel): ThinkingLevel {
+  const levels = model.thinkingLevels ?? [];
+  if (levels.length === 0 || levels.includes(current)) return current;
+  return levels.includes('medium') ? 'medium' : levels[0];
 }
 
 export function markLoading(state: AsterState, sessionId: string): AsterState {
@@ -608,6 +633,8 @@ export function selectDesktop(state: AsterState): DesktopView {
     !!session && state.stopRequested[session.sessionId] === true,
   );
   const workspace = session ? state.workspaces.find(item => item.id === session.workspaceId) ?? null : null;
+  /** Only a session-less screen may borrow a default: a session with no model really has none. */
+  const newChatModel = session ? null : state.draftModel ?? state.defaultModel;
   const activeSession: ActiveSession | null = session
     ? {
         session,
@@ -628,9 +655,9 @@ export function selectDesktop(state: AsterState): DesktopView {
     activeSession,
     runtime,
     models: state.models,
-    currentModel: session?.model ?? null,
-    thinkingLevel: session?.thinkingLevel ?? 'medium',
-    availableThinkingLevels: session?.model?.thinkingLevels ?? [],
+    currentModel: session?.model ?? newChatModel,
+    thinkingLevel: session?.thinkingLevel ?? state.draftThinking ?? state.defaultThinking,
+    availableThinkingLevels: (session?.model ?? newChatModel)?.thinkingLevels ?? [],
     commands: session ? state.commands[session.sessionId] ?? [] : [],
     pendingInput: pendingDialog(state),
     pendingQuestion,
@@ -659,6 +686,8 @@ export function writeSelection(storage: Storage | null, selection: Selection): v
   } catch {
     return;
   }
+  // Reopening the app on the last session needs the profile: localStorage is per-origin.
+  persistPreference({ selection });
 }
 
 function messageOf(error: unknown): string {
@@ -666,8 +695,8 @@ function messageOf(error: unknown): string {
 }
 
 export interface DesktopActions {
-  chooseProject(): Promise<void>;
-  newSession(projectId?: string): Promise<void>;
+  chooseProject(): Promise<boolean>;
+  newSession(projectId?: string): Promise<boolean>;
   openSession(selection: Selection): Promise<boolean>;
   send(text: string, images?: UiImage[]): Promise<boolean>;
   abort(): Promise<void>;
@@ -696,6 +725,7 @@ export function useDesktopState(client: WsClient, storage?: Storage | null): {
   const [questionPending, setQuestionPending] = useState(false);
   const replying = useRef<Set<string>>(new Set());
   const answering = useRef<Set<string>>(new Set());
+  const changingModelSettings = useRef<Set<string>>(new Set());
   const latest = useRef(state);
   latest.current = state;
 
@@ -777,11 +807,18 @@ export function useDesktopState(client: WsClient, storage?: Storage | null): {
   );
 
   const createSession = useCallback(
-    async (projectId: string): Promise<void> => {
+    async (projectId: string): Promise<boolean> => {
       const workspaceId = await ensureWorkspace(projectId);
-      const created = await client.request('session.create', { workspaceId });
+      // A model chosen on the new-chat screen belongs to the session this creates.
+      const draft = latest.current;
+      const created = await client.request('session.create', {
+        workspaceId,
+        ...(draft.draftModel ? { model: draft.draftModel } : {}),
+        ...(draft.draftThinking ? { thinkingLevel: draft.draftThinking } : {}),
+      });
       await refreshSessions(workspaceId);
       await loadSession({ workspaceId, sessionId: created.sessionId });
+      return true;
     },
     [client, ensureWorkspace, loadSession, refreshSessions],
   );
@@ -795,19 +832,20 @@ export function useDesktopState(client: WsClient, storage?: Storage | null): {
     [client, commit, refreshSessions],
   );
 
-  const chooseProject = useCallback(async (): Promise<void> => {
-    await run(async () => {
+  const chooseProject = useCallback(async (): Promise<boolean> => {
+    const created = await run(async () => {
       const picked = await client.request('dialog.selectDirectory', {});
-      if (!picked.path) return;
+      if (!picked.path) return false;
       const project = await client.request('project.open', { path: picked.path });
       commit(current => upsertProject(current, project));
       await loadProject(project.id);
-      await createSession(project.id);
+      return createSession(project.id);
     });
+    return created === true;
   }, [client, commit, createSession, loadProject, run]);
 
   const newSession = useCallback(
-    async (projectId?: string): Promise<void> => {
+    async (projectId?: string): Promise<boolean> => {
       const current = latest.current;
       const selectedWorkspace = current.selected
         ? current.workspaces.find(workspace => workspace.id === current.selected?.workspaceId)
@@ -815,9 +853,9 @@ export function useDesktopState(client: WsClient, storage?: Storage | null): {
       const target = projectId ?? selectedWorkspace?.projectId ?? current.projects[0]?.id;
       if (!target) {
         commit(value => ({ ...value, error: 'Open a project folder before starting a session.' }));
-        return;
+        return false;
       }
-      await run(() => createSession(target));
+      return await run(() => createSession(target)) === true;
     },
     [commit, createSession, run],
   );
@@ -887,28 +925,69 @@ export function useDesktopState(client: WsClient, storage?: Storage | null): {
     [client, commit, run],
   );
 
+  const changeModelSettings = useCallback(async (
+    method: 'session.setModel' | 'session.setThinkingLevel',
+    params: WsParams<'session.setModel'> | WsParams<'session.setThinkingLevel'>,
+  ): Promise<void> => {
+    const sessionId = params.sessionId;
+    if (changingModelSettings.current.has(sessionId)) return;
+    changingModelSettings.current.add(sessionId);
+    try {
+      await run(async () => {
+        const result = await client.request(method, params);
+        if (!isSessionModelSettingsResult(result)) throw new Error('The host did not confirm the actual model settings. Reopen the session to refresh them.');
+        commit(value => updateSession(value, sessionId, session => ({ ...session, model: result.model, thinkingLevel: result.thinkingLevel })));
+        // A new model changes the context window, so the ring and the Context card
+        // must not keep the previous capacity until the next settled turn.
+        if (method === 'session.setModel') {
+          const stats = await client.request('session.getStats', { sessionId });
+          commit(value => setSessionStats(value, sessionId, stats));
+        }
+      });
+    } finally { changingModelSettings.current.delete(sessionId); }
+  }, [client, commit, run]);
+
+  /**
+   * Only the model becomes the host's new-chat default: `defaultEffort` is a setting the user may
+   * have chosen in Settings, so adjusting effort in one picker must not overwrite it.
+   */
+  const rememberDefaultModel = useCallback(
+    async (model: WireModel): Promise<void> => {
+      try {
+        await client.request('settings.update', { config: { defaultModel: model } });
+      } catch (error) {
+        commit(value => ({ ...value, error: `The new-chat model was not saved: ${messageOf(error)}` }));
+      }
+    },
+    [client, commit],
+  );
+
   const setModel = useCallback(
     async (model: WireModel): Promise<void> => {
       const sessionId = latest.current.selected?.sessionId;
-      if (!sessionId) return;
-      await run(async () => {
-        await client.request('session.setModel', { sessionId, model });
-        commit(value => updateSession(value, sessionId, session => ({ ...session, model })));
-      });
+      if (!sessionId) {
+        const level = draftLevelFor(model, latest.current.draftThinking ?? latest.current.defaultThinking);
+        commit(value => ({ ...value, draftModel: model, draftThinking: level }));
+        await rememberDefaultModel(model);
+        return;
+      }
+      await changeModelSettings('session.setModel', { sessionId, model });
+      // The choice also becomes the next new chat's model, the way the reference remembers it.
+      const applied = latest.current.sessions.find(item => item.sessionId === sessionId)?.thinkingLevel
+        ?? draftLevelFor(model, latest.current.defaultThinking);
+      commit(value => ({ ...value, draftModel: model, draftThinking: applied }));
+      await rememberDefaultModel(model);
     },
-    [client, commit, run],
+    [changeModelSettings, commit, rememberDefaultModel],
   );
 
   const setThinking = useCallback(
     async (level: ThinkingLevel): Promise<void> => {
       const sessionId = latest.current.selected?.sessionId;
-      if (!sessionId) return;
-      await run(async () => {
-        await client.request('session.setThinkingLevel', { sessionId, level });
-        commit(value => updateSession(value, sessionId, session => ({ ...session, thinkingLevel: level })));
-      });
+      if (sessionId) await changeModelSettings('session.setThinkingLevel', { sessionId, level });
+      commit(value => ({ ...value, draftThinking: level }));
     },
-    [client, commit, run],
+    [changeModelSettings, commit],
   );
 
   const setApproval = useCallback(
@@ -1030,6 +1109,17 @@ export function useDesktopState(client: WsClient, storage?: Storage | null): {
           buffered = [];
           commit(state => installModels(mergeSessionStates(state, records), models));
           if (pending.length) commit(state => pending.reduce(applySessionState, state));
+          // What a brand new chat would use, so the new-chat screen never says "No model".
+          void client.request('model.default', {}).then(value => {
+            if (!alive || current !== generation) return;
+            const candidate = value as { model?: WireModel | null; thinkingLevel?: ThinkingLevel } | null;
+            if (!candidate || typeof candidate !== 'object') return;
+            const model = candidate.model === null || typeof candidate.model === 'object' ? candidate.model ?? null : undefined;
+            if (model === undefined || typeof candidate.thinkingLevel !== 'string') return;
+            commit(state => installModelDefaults(state, { model, thinkingLevel: candidate.thinkingLevel as ThinkingLevel }));
+          }, () => {
+            // The host may not expose a new-chat default; the picker then falls back to no selection.
+          });
           const saved = readSelection(selectionStore);
           if (saved) {
             const known = latest.current.sessions.find(

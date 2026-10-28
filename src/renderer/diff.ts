@@ -32,12 +32,6 @@ export interface EditPair {
   newText: string;
 }
 
-export interface FileChange {
-  path: string;
-  additions: number;
-  deletions: number;
-}
-
 interface Op {
   kind: 'equal' | 'add' | 'del';
   text: string;
@@ -300,21 +294,4 @@ export function languageOf(path: string): string {
   const extension = path.replaceAll('\\', '/').split('.').pop()?.toLowerCase() ?? '';
   const known: Record<string, string> = { ts: 'ts', tsx: 'tsx', js: 'js', jsx: 'jsx', mjs: 'js', cjs: 'js', css: 'css', json: 'json', md: 'md', py: 'py', rs: 'rust', go: 'go', sh: 'sh', yml: 'yaml', yaml: 'yaml', html: 'html' };
   return known[extension] ?? '';
-}
-
-/** Aggregate real per-file changes for the details panel; paths without diff data are omitted. */
-export function summarizeChanges(calls: ReadonlyArray<{ name: string; arguments: unknown }>): FileChange[] {
-  const changes = new Map<string, FileChange>();
-  for (const call of calls) {
-    const path = toolFilePath(call.arguments);
-    const diff = diffForToolArgs(call.name, call.arguments);
-    if (!path || !diff || (!diff.additions && !diff.deletions)) continue;
-    const current = changes.get(path) ?? { path, additions: 0, deletions: 0 };
-    changes.set(path, {
-      path,
-      additions: current.additions + diff.additions,
-      deletions: current.deletions + diff.deletions,
-    });
-  }
-  return [...changes.values()];
 }

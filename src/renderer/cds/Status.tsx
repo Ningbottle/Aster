@@ -1,8 +1,7 @@
 /*
  * Adapted from Caho1/open-claude-ui, code-examples/StatusIndicators.tsx, MIT,
  * commit c1f923ae0051a871941b98a0e2e3183a545e6a85.
- * The 6px light and the skeleton sheen ride on theme classes that already ship
- * in cds/theme.css (.status-dot, cds-skeleton-sweep).
+ * The 6px light uses the status-dot class in cds/theme.css.
  */
 export type StatusKind = 'ready' | 'running' | 'error' | 'clay';
 
@@ -14,7 +13,5 @@ export function StatusDot({ kind, label }: { kind: StatusKind; label?: string })
   </span>;
 }
 
-/** 2s 105° sheen; fills a placeholder box while host statistics are read. */
-export function SkeletonSweep({ className = '' }: { className?: string }) {
-  return <div className={`cds-skeleton ${className}`.trim()} aria-hidden="true"><span className="cds-skeleton-band" /></div>;
-}
+// Keep the existing import path available to consumers of the original sweep.
+export { SkeletonSweep } from './Skeleton';

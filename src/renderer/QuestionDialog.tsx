@@ -36,7 +36,7 @@ export function QuestionDialog({ args, invalid = false, onReply, pending, error 
   return <div className="modal-scrim" ref={layer}>
     <form className="rename-dialog" role="dialog" aria-modal="true" aria-labelledby="question-dialog-title"
       style={{ maxHeight: '80vh', overflowY: 'auto' }}
-      onKeyDown={event => { if (event.key === 'Escape' && !pending) { event.preventDefault(); cancel(); } }}
+      onKeyDown={event => { if (event.key === 'Escape' && !pending && !event.nativeEvent.isComposing && event.nativeEvent.keyCode !== 229) { event.preventDefault(); cancel(); } }}
       onSubmit={event => { event.preventDefault(); if (complete && !pending) submit(); }}>
       <h2 id="question-dialog-title">{invalid ? 'Question unavailable' : 'Pi needs your input'}</h2>
       {invalid

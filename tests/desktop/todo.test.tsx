@@ -14,21 +14,20 @@ const plan: TodoPlan = {
 };
 
 describe('TodoSection', () => {
-  test('keeps native groups, loose todos, and adopted commits distinct', () => {
+  test('lists native groups and loose todos but never adopted commits', () => {
+    // Adopted commits are git history; showing them as tasks made the card read like a changelog.
     expect(todoSections(plan).map(section => [section.id, section.items.map(todo => todo.id), section.readOnly])).toEqual([
       ['phase', ['working', 'finished'], undefined],
       ['ungrouped', ['loose'], undefined],
-      ['adopted', ['adopted'], true],
     ]);
   });
 
-  test('renders status and read-only adopted rows accessibly', () => {
+  test('renders status rows accessibly', () => {
     const html = renderToStaticMarkup(<TodoRows plan={plan} onToggle={() => {}} />);
     expect(html).toContain('aria-checked="false" aria-label="Task working: In progress"');
     expect(html).toContain('aria-checked="true" aria-label="Task finished: Done"');
     expect(html).toContain('Status: Pending');
-    expect(html).toContain('Adopted commits');
-    expect(html).toContain('Task adopted');
-    expect(html).not.toContain('aria-label="Task adopted: Done"');
+    expect(html).not.toContain('Adopted commits');
+    expect(html).not.toContain('Task adopted');
   });
 });

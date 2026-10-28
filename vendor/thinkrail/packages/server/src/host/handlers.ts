@@ -34,6 +34,7 @@ import {
 	followUpSession,
 	getSessionCommands,
 	getSessionMessages,
+	getSessionModelSettings,
 	getSessionResources,
 	getSessionStats,
 	getUsageSummary,
@@ -1025,11 +1026,11 @@ const handlers: WsHandlers = {
 	},
 	"session.setModel": async (p) => {
 		noteRecentModel(await setSessionModel(p.sessionId, p.model));
-		return { ok: true } as const;
+		return { ok: true, ...getSessionModelSettings(p.sessionId) } as const;
 	},
 	"session.setThinkingLevel": (p) => {
 		setSessionThinkingLevel(p.sessionId, p.level);
-		return { ok: true } as const;
+		return { ok: true, ...getSessionModelSettings(p.sessionId) } as const;
 	},
 	"session.setApproval": (p) => {
 		setSessionApproval(p.sessionId, p.mode);

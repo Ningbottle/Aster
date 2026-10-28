@@ -1,6 +1,7 @@
 import { BrowserWindow, session } from 'electron';
 import { join } from 'node:path';
 import { registerNativeActions } from './native';
+import { registerPreferences } from './preferences';
 
 export async function createWindow(origin: string): Promise<BrowserWindow> {
   const endpoint = new URL(origin);
@@ -19,7 +20,8 @@ export async function createWindow(origin: string): Promise<BrowserWindow> {
   });
   window.removeMenu();
   const disposeNative = registerNativeActions(window, endpoint.origin);
-  window.on('closed', disposeNative);
+  const disposePreferences = registerPreferences(window, endpoint.origin);
+  window.on('closed', () => { disposeNative(); disposePreferences(); });
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   window.webContents.on('will-navigate', event => event.preventDefault());
   // Main frame navigation stays blocked; preview frames are sandboxed and CSP frame-src caps them.

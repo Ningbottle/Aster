@@ -6,11 +6,10 @@ import './todo.css';
 
 type DisplaySection = { id: string; title?: string; items: TodoItem[]; readOnly?: boolean };
 
-/** Preserve host-provided groups and keep adopted commits visible as read-only rows. */
+/** Only real todos belong in the list; adopted commits are git history, not tasks. */
 export function todoSections(plan: TodoPlan): DisplaySection[] {
   const sections: DisplaySection[] = plan.groups.filter(group => group.todos.length > 0).map(group => ({ id: group.id, title: group.title, items: group.todos }));
   if (plan.todos.length) sections.push({ id: 'ungrouped', items: plan.todos });
-  if (plan.adoptedCommits?.length) sections.push({ id: 'adopted', title: 'Adopted commits', items: plan.adoptedCommits, readOnly: true });
   return sections;
 }
 

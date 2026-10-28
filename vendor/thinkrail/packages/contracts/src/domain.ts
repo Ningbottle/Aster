@@ -361,7 +361,7 @@ const THINKING_LEVEL_SET = {
 	max: true,
 } satisfies Record<ThinkingLevel, true>;
 
-function isThinkingLevel(value: unknown): value is ThinkingLevel {
+export function isThinkingLevel(value: unknown): value is ThinkingLevel {
 	return typeof value === "string" && Object.hasOwn(THINKING_LEVEL_SET, value);
 }
 

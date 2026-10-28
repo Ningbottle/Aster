@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest';
 import type { SessionStats } from '@thinkrail/contracts';
-import { apiUsageSegments, contextBreakdown, contextWindowUsage, formatPercent, formatTokens } from '../../src/renderer/usage';
+import { apiUsageSegments, contextBreakdown, contextWindowUsage, formatTokens } from '../../src/renderer/usage';
 
 function stats(tokens: number | null, contextWindow: number, usage: Partial<SessionStats['tokens']> = {}): SessionStats {
   return {
@@ -23,14 +23,15 @@ describe('session context stats', () => {
   });
 
   test('formats sub-percent values without rounding 192 of 128k up to 0.2%', () => {
-    expect(formatPercent(0)).toBe('0%');
-    expect(formatPercent(0.012)).toBe('<0.1%');
-    expect(formatPercent(0.049)).toBe('<0.1%');
-    expect(formatPercent(0.05)).toBe('0.1%');
-    expect(formatPercent(0.15)).toBe('0.1%');
-    expect(formatPercent(0.996)).toBe('0.9%');
-    expect(formatPercent(1)).toBe('1%');
-    expect(formatPercent(22.9)).toBe('23%');
+    const display = (percent: number) => contextWindowUsage(stats(percent * 1000, 100_000)).percentLabel;
+    expect(display(0)).toBe('0%');
+    expect(display(0.012)).toBe('<0.1%');
+    expect(display(0.049)).toBe('<0.1%');
+    expect(display(0.05)).toBe('0.1%');
+    expect(display(0.15)).toBe('0.1%');
+    expect(display(0.996)).toBe('0.9%');
+    expect(display(1)).toBe('1%');
+    expect(display(22.9)).toBe('23%');
   });
 
   test('reads context occupancy from SessionStats.contextUsage', () => {

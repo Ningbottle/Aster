@@ -29,10 +29,6 @@ function percentDisplay(percent: number): { label: string; value: number } {
   return { label: `${value}%`, value };
 }
 
-export function formatPercent(percent: number): string {
-  return percentDisplay(percent).label;
-}
-
 export interface ContextWindowView {
   /** Pi's session.getContextUsage() reading; null until the host reports one. */
   tokens: number | null;

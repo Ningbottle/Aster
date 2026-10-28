@@ -24,6 +24,8 @@ export default defineConfig({
         + '\n\nremark-gfm:\n\n' + readFileSync('node_modules/remark-gfm/license', 'utf8')
         + '\n\npdfjs-dist:\n\n' + readFileSync('node_modules/pdfjs-dist/LICENSE', 'utf8')
         + '\n\nInter font (SIL OFL 1.1):\n\n' + readFileSync('src/renderer/assets/fonts/Inter-OFL.txt', 'utf8')
+        + '\n\nCascadia Mono font (SIL OFL 1.1, Microsoft Corporation; files via @fontsource/cascadia-mono 5.3.0):\n\n' + readFileSync('src/renderer/assets/fonts/CascadiaMono-OFL.txt', 'utf8')
+        + '\n\nPrismJS (MIT, 1.30.0):\n\n' + readFileSync('node_modules/prismjs/LICENSE', 'utf8')
         + '\n\nThinkRail — Copyright 2026 JetBrains s.r.o.:\n\n' + readFileSync('vendor/thinkrail/LICENSE', 'utf8') });
     } }],
     esbuild: { jsx: 'automatic' },

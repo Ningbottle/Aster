@@ -1,5 +1,6 @@
-import { ipcMain, shell, type BrowserWindow, type IpcMainInvokeEvent } from 'electron';
+import { ipcMain, shell, type BrowserWindow } from 'electron';
 import { stat } from 'node:fs/promises';
+import { senderIsWindow } from './ipc-guard';
 import { resolveFileInRoot } from './native-paths';
 import { createWorkspaceRootResolver } from './workspace-roots';
 
@@ -15,14 +16,6 @@ const EXTERNAL = 'aster:native-open-external';
 function stringField(value: unknown, name: string): string {
   if (typeof value !== 'string' || value.length === 0 || value.length > 4096) throw new Error(`Invalid ${name}.`);
   return value;
-}
-
-function senderIsWindow(window: BrowserWindow, origin: string) {
-  return (event: IpcMainInvokeEvent): void => {
-    if (event.sender !== window.webContents) throw new Error('Unexpected IPC sender.');
-    const url = event.senderFrame?.url ?? '';
-    if (!url.startsWith(`${origin}/`) && url !== origin) throw new Error('Unexpected IPC frame.');
-  };
 }
 
 async function openWithShell(path: string): Promise<NativeResult> {

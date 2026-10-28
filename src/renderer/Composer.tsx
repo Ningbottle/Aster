@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ClipboardEvent } from 'react';
-import { ArrowRight, ArrowUp, Check, FolderSimple, ImageSquare, Plus, ShieldCheck, Square, X } from '@phosphor-icons/react';
+import { ArrowRight, ArrowUp, Check, FolderSimple, ImageSquare, Plus, Prohibit, ShieldCheck, Square, X } from '@phosphor-icons/react';
 import {
   ACCEPTED_IMAGE_TYPES,
   IMAGE_MAX_BASE64_BYTES,
@@ -23,8 +23,10 @@ import { dismissesCommandMenu, isComposingKey, submitsMessage } from './composer
 import { filterMentions, mentionAt, mentionInsertion, splitMentionQuery, type MentionToken } from './composer-mentions';
 import { FileIcon } from './FileIcon';
 import { useMenuFocus } from './menu-focus';
+import { EffortSelector } from './cds/EffortSelector';
+import { ModelSwitcher } from './cds/ModelSwitcher';
 
-type ComposerMenu = 'model' | 'thinking' | 'access' | 'add' | 'usage';
+type ComposerMenu = 'model' | 'access' | 'add' | 'usage';
 
 function matchingCommands(commands: SlashCommandInfo[], draft: string): { query: string; matches: SlashCommandInfo[] } | null {
   const match = /^\/(\S*)$/.exec(draft);
@@ -32,8 +34,6 @@ function matchingCommands(commands: SlashCommandInfo[], draft: string): { query:
   const query = match[1].toLocaleLowerCase();
   return { query, matches: commands.filter(command => command.name.toLocaleLowerCase().startsWith(query)).slice(0, 12) };
 }
-
-const capitalize = (value: string) => value ? value[0].toLocaleUpperCase() + value.slice(1) : value;
 
 interface ComposerAttachment extends UiImage {
   id: string;
@@ -43,6 +43,7 @@ interface ComposerAttachment extends UiImage {
 interface Draft {
   text: string;
   images: ComposerAttachment[];
+  origin: 'draft' | 'unconfirmed';
 }
 
 /** The image cap is Pi's provider contract; the total is under Bun's default 16 MiB WS frame. */
@@ -85,6 +86,7 @@ export function PromptComposer({ onChooseProject, view, client, onSend, onAbort,
   onSetModel: (model: WireModel) => void; onSetThinking: (level: ThinkingLevel) => void; onOpenDetails: () => void; pending: boolean; awaitingInput: boolean;
 }) {
   const [draft, setDraft] = useState('');
+  const [draftOrigin, setDraftOrigin] = useState<Draft['origin']>('draft');
   const [dismissedCommand, setDismissedCommand] = useState<string | null>(null);
   const [commandIndex, setCommandIndex] = useState(0);
   const [attachments, setAttachments] = useState<ComposerAttachment[]>([]);
@@ -104,13 +106,17 @@ export function PromptComposer({ onChooseProject, view, client, onSend, onAbort,
   const filePicker = useRef<HTMLInputElement>(null);
   const previewOpener = useRef<HTMLElement | null>(null);
   const triggers = useRef<Partial<Record<ComposerMenu, HTMLButtonElement | null>>>({});
-  useMenuFocus(menu, menuPanel);
+  useMenuFocus(menu, menuPanel, menuBox !== null);
   const identity = view.activeSession?.session.sessionId ?? '';
   const previousIdentity = useRef(identity);
   /** Drafts survive switching sessions; a sent draft is removed, an empty draft is not stored. */
   const drafts = useRef(new Map<string, Draft>());
+  const [savedDrafts, setSavedDrafts] = useState<Map<string, Draft[]>>(() => new Map());
+  const recoverable = savedDrafts.get(identity) ?? [];
   const connected = view.connection === 'connected';
   const canEdit = !!view.activeSession && connected && !view.loading;
+  /** Before a session exists the text can't be sent, but the model choice is real: `session.create` applies it. */
+  const canConfigureModel = connected && !view.loading;
   const hasDraft = !!draft.trim() || attachments.length > 0;
   /** A running turn must stay editable: that is how a follow-up (with images) is queued. */
   const canSend = canEdit && hasDraft && !awaitingInput;
@@ -140,20 +146,24 @@ export function PromptComposer({ onChooseProject, view, client, onSend, onAbort,
   const addingFiles = useRef<object | null>(null);
   const identityRef = useRef(identity);
   identityRef.current = identity;
-  const storeDraft = (text: string, images: ComposerAttachment[]) => {
+  const storeDraft = (text: string, images: ComposerAttachment[], origin = draftOrigin) => {
     if (!identity) return;
-    if (text || images.length > 0) drafts.current.set(identity, { text, images });
+    if (text || images.length > 0) drafts.current.set(identity, { text, images, origin });
     else drafts.current.delete(identity);
   };
   const changeDraft = (value: string) => {
     setDraft(value);
-    storeDraft(value, attachments);
+    const origin = !value && attachments.length === 0 ? 'draft' : draftOrigin;
+    setDraftOrigin(origin);
+    storeDraft(value, attachments, origin);
     setMention(mentionAt(value, textarea.current?.selectionStart ?? value.length));
   };
   const changeAttachments = (update: (current: ComposerAttachment[]) => ComposerAttachment[]) => {
     setAttachments(current => {
       const next = update(current);
-      storeDraft(textareaDraft.current, next);
+      const origin = !textareaDraft.current && next.length === 0 ? 'draft' : draftOrigin;
+      setDraftOrigin(origin);
+      storeDraft(textareaDraft.current, next, origin);
       return next;
     });
   };
@@ -170,6 +180,7 @@ export function PromptComposer({ onChooseProject, view, client, onSend, onAbort,
     setMentionFiles([]);
     const saved = identity ? drafts.current.get(identity) : undefined;
     setDraft(saved?.text ?? '');
+    setDraftOrigin(saved?.origin ?? 'draft');
     setAttachments(saved?.images ?? []);
     if (textarea.current) textarea.current.style.height = 'auto';
   }, [identity]);
@@ -197,7 +208,7 @@ export function PromptComposer({ onChooseProject, view, client, onSend, onAbort,
     if (!menu) { setMenuBox(null); return; }
     const trigger = triggers.current[menu];
     if (!trigger) return;
-    const widths = { model: 300, thinking: 190, access: 310, add: 184, usage: 322 } as const;
+    const widths = { model: 320, access: 310, add: 184, usage: 322 } as const;
     const width = widths[menu];
     const rect = trigger.getBoundingClientRect();
     const regionTop = region.current?.getBoundingClientRect().top ?? rect.top;
@@ -210,10 +221,17 @@ export function PromptComposer({ onChooseProject, view, client, onSend, onAbort,
   }, [menu]);
   useEffect(() => {
     if (!menu) return;
-    const outside = (event: PointerEvent) => { if (!region.current?.contains(event.target as Node)) setMenu(null); };
-    const escape = (event: KeyboardEvent) => { if (event.key === 'Escape') { event.preventDefault(); triggers.current[menu]?.focus(); setMenu(null); } };
-    document.addEventListener('pointerdown', outside); document.addEventListener('keydown', escape);
-    return () => { document.removeEventListener('pointerdown', outside); document.removeEventListener('keydown', escape); };
+    const outside = (event: Event) => {
+      const surface = menu === 'usage' ? usageCard.current : menuPanel.current;
+      if (!surface?.contains(event.target as Node) && !triggers.current[menu]?.contains(event.target as Node)) setMenu(null);
+    };
+    const escape = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape' || event.isComposing || event.keyCode === 229) return;
+      event.preventDefault();
+      triggers.current[menu]?.focus(); setMenu(null);
+    };
+    document.addEventListener('pointerdown', outside); document.addEventListener('focusin', outside); document.addEventListener('keydown', escape);
+    return () => { document.removeEventListener('pointerdown', outside); document.removeEventListener('focusin', outside); document.removeEventListener('keydown', escape); };
   }, [menu]);
   useEffect(() => {
     if (menu === 'usage' && menuBox) usageCard.current?.focus();
@@ -271,17 +289,30 @@ export function PromptComposer({ onChooseProject, view, client, onSend, onAbort,
     const sent = attachments;
     // Clear optimistically so a second Enter cannot submit the same draft twice.
     setDraft('');
+    setDraftOrigin('draft');
     setAttachments([]);
     setPreview(null);
     setDismissedCommand(null);
     storeDraft('', []);
     if (await onSend(text, sent.map(({ data, mimeType }) => ({ data, mimeType })))) return;
-    // A rejected send restores the draft unless the user moved on or already started writing again.
-    if (identityRef.current === identity && textareaDraft.current === '' && attachmentRef.current.length === 0) {
-      setDraft(text);
-      setAttachments(sent);
-      storeDraft(text, sent);
-    }
+    // An acknowledgement may be lost after execution. Keep the draft marked unconfirmed,
+    // including when there is no newer input; restoring never resends it automatically.
+    const unsent: Draft = { text, images: sent, origin: 'unconfirmed' };
+    setSavedDrafts(previous => new Map(previous).set(identity, [...(previous.get(identity) ?? []), unsent]));
+  }
+  function restoreSavedDraft() {
+    const saved = recoverable[0];
+    if (!saved) return;
+    const current: Draft = { text: textareaDraft.current, images: attachmentRef.current, origin: draftOrigin };
+    setSavedDrafts(previous => {
+      const next = new Map(previous);
+      const remaining = (next.get(identity) ?? []).filter(item => item !== saved);
+      if (current.text || current.images.length) remaining.push(current);
+      if (remaining.length) next.set(identity, remaining); else next.delete(identity);
+      return next;
+    });
+    setDraft(saved.text); setDraftOrigin(saved.origin); setAttachments(saved.images); storeDraft(saved.text, saved.images, saved.origin);
+    setMention(null); setDismissedCommand(null); textarea.current?.focus();
   }
   function insertCommand(command: SlashCommandInfo) {
     changeDraft(`/${command.name} `);
@@ -319,6 +350,11 @@ export function PromptComposer({ onChooseProject, view, client, onSend, onAbort,
     onDrop={event => { event.preventDefault(); setDragging(false); void addFiles(Array.from(event.dataTransfer.files)); }}>
     {!canEdit && view.connection === 'disconnected' && <p className="composer-note">Disconnected from the local server. Reconnecting…</p>}
     {attachError && <p className="composer-attach-error" role="alert">{attachError}</p>}
+    {(recoverable.length > 0 || draftOrigin === 'unconfirmed') && <div className="composer-recovery" role="status"><span>
+      {(draftOrigin === 'unconfirmed' || recoverable.some(item => item.origin === 'unconfirmed')) && <>Message delivery is unconfirmed. Check the conversation before retrying. </>}
+      {recoverable.filter(item => item.origin === 'draft').length > 0 && <>{recoverable.filter(item => item.origin === 'draft').length} unsent draft saved. </>}
+      {recoverable.filter(item => item.origin === 'unconfirmed').length > 0 && <>{recoverable.filter(item => item.origin === 'unconfirmed').length} unconfirmed message saved.</>}
+    </span>{recoverable.length > 0 && <Button variant="secondary" size="xs" disabled={!canEdit || awaitingInput} title={recoverable[0].text.slice(0, 160)} onClick={restoreSavedDraft}>Restore saved draft</Button>}</div>}
     <input ref={filePicker} className="composer-file-input" type="file" multiple accept={ACCEPTED_IMAGE_TYPES.join(',')} tabIndex={-1} aria-hidden="true"
       onChange={event => { const files = Array.from(event.target.files ?? []); event.target.value = ''; void addFiles(files); }} />
     <ComposerFrame disabled={!canEdit}>
@@ -378,7 +414,7 @@ export function PromptComposer({ onChooseProject, view, client, onSend, onAbort,
     <div className="composer-meta">
       <div className="composer-meta-left">
         {view.activeSession && <div className="menu-anchor">
-          <Button variant="ghost" size="xs" icon={<ShieldCheck size={14} />} className="permission-control" ref={element => { triggers.current.access = element; }} onClick={() => setMenu(menu === 'access' ? null : 'access')} aria-haspopup="menu" aria-expanded={menu === 'access'} title={approvalMode === 'ask' ? 'Access: confirm changes' : 'Access: auto-approve'}>Access</Button>
+          <Button variant="ghost" size="xs" icon={approvalMode === 'ask' ? <ShieldCheck size={14} /> : <Prohibit size={14} />} className="permission-control" ref={element => { triggers.current.access = element; }} onClick={() => setMenu(menu === 'access' ? null : 'access')} aria-haspopup="menu" aria-expanded={menu === 'access'} title={approvalMode === 'ask' ? 'Access: confirm changes' : 'Access: auto-approve'}>{approvalMode === 'ask' ? 'Ask before changes' : 'Auto accept edits'}</Button>
           {menu === 'access' && <div className="popover access-menu" style={menuStyle} role="menu" aria-label="Tool access" ref={menuPanel}>
             <div className="menu-heading">Tool access</div>
             {([
@@ -392,13 +428,12 @@ export function PromptComposer({ onChooseProject, view, client, onSend, onAbort,
         </div>}
       </div>
       <div className="composer-meta-right">
-        {view.models.length > 0 && <div className="menu-anchor"><Button variant="ghost" size="xs" className="composer-model" title={view.currentModel?.name ?? 'Model'} ref={element => { triggers.current.model = element; }} onClick={() => setMenu(menu === 'model' ? null : 'model')} aria-haspopup="menu" aria-expanded={menu === 'model'}>{view.currentModel?.name ?? 'Model'}</Button>
-          {menu === 'model' && <div className="popover model-menu" style={menuStyle} role="menu" ref={menuPanel}><div className="menu-heading">Model</div>{view.models.map(model => <Button variant="ghost" size="xs" key={`${model.provider}/${model.id}`} role="menuitemradio" aria-checked={model.id === view.currentModel?.id && model.provider === view.currentModel?.provider} className="menu-row model-row" onClick={() => { triggers.current.model?.focus(); setMenu(null); onSetModel(model); }}><span className="model-row-text"><span className="model-name">{model.name}</span><span className="menu-sub">{model.provider}</span></span><span className="menu-check-right">{model.id === view.currentModel?.id && model.provider === view.currentModel?.provider && <Check size={14} />}</span></Button>)}</div>}
-        </div>}
-        {view.availableThinkingLevels.length > 0 && <div className="menu-anchor">
-          <Button variant="ghost" size="xs" className="composer-control" title="Thinking level" ref={element => { triggers.current.thinking = element; }} onClick={() => setMenu(menu === 'thinking' ? null : 'thinking')} aria-haspopup="menu" aria-expanded={menu === 'thinking'}>{capitalize(view.thinkingLevel)}</Button>
-          {menu === 'thinking' && <div className="popover thinking-menu" style={menuStyle} role="menu" ref={menuPanel}><div className="menu-heading">Thinking</div>{view.availableThinkingLevels.map(level => <Button variant="ghost" size="xs" key={level} role="menuitem" className="menu-row" onClick={() => { triggers.current.thinking?.focus(); setMenu(null); onSetThinking(level); }}><span className="menu-check">{view.thinkingLevel === level && <Check size={13} />}</span>{capitalize(level)}</Button>)}<p className="menu-footnote">Applies to the next turn.</p></div>}
-        </div>}
+        {view.models.length > 0 && <ModelSwitcher models={view.models} currentModel={view.currentModel} effort={view.thinkingLevel}
+          disabled={!canConfigureModel || pending || awaitingInput} open={menu === 'model'} onOpenChange={open => setMenu(open ? 'model' : null)} onChooseModel={onSetModel}
+          triggerRef={element => { triggers.current.model = element; }} panelRef={menuPanel} menuStyle={menuStyle}>
+          {view.availableThinkingLevels.length > 0 && <EffortSelector levels={view.availableThinkingLevels} value={view.thinkingLevel}
+            onChange={onSetThinking} disabled={!canConfigureModel || pending || awaitingInput} />}
+        </ModelSwitcher>}
         {view.activeSession
           ? <Button variant="ghost" size="icon" className="composer-usage" ref={element => { triggers.current.usage = element; }} aria-label={`Context usage: ${usage.percentLabel ?? 'unknown'}`} title={usage.title} aria-haspopup="dialog" aria-expanded={menu === 'usage'} onClick={() => setMenu(menu === 'usage' ? null : 'usage')}>
             <ContextRing usage={usage} size={14} decorative />

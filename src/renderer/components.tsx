@@ -1,5 +1,5 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { ArrowDown, Asterisk, CircleNotch, WarningCircle, X } from '@phosphor-icons/react';
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
+import { ArrowDown, CircleNotch, WarningCircle, X } from '@phosphor-icons/react';
 import type { ApprovalMode, ThinkingLevel, WireModel } from '@thinkrail/contracts';
 import type { DesktopView } from './desktop-state';
 import type { UiContent, UiDialogRequest, UiImage, UiMessage, UiToolActivity } from './model';
@@ -14,14 +14,20 @@ import { TerminalPanel } from './TerminalPanel';
 import type { WsClient } from './client';
 import { HomeUsage } from './HomeUsage';
 import { useModalFocus } from './modal-focus';
+import { Skeleton, SkeletonGroup } from './cds/Skeleton';
 import { distanceFromBottom, isPinned, shouldFollow, showsJump } from './scroll-follow';
+import { turnMetaIndexes } from './conversation-turns';
 
-export function CodeWorkspace({ view, client, terminalOpen, onCloseTerminal, onReportError, onChooseProject, onSend, onAbort, onSetApproval, onSetModel, onSetThinking, onOpenFile, onOpenExternal, onOpenDetails, pending, error, onDismissError }: {
+export function CodeWorkspace({ view, client, terminalOpen, onCloseTerminal, onReportError, onChooseProject, onSend, onAbort, onSetApproval, onSetModel, onSetThinking, onOpenFile, onOpenExternal, onOpenDetails, cards, showTerminal, pending, error, onDismissError }: {
   view: DesktopView; client: WsClient; terminalOpen: boolean; onCloseTerminal: () => void; onReportError: (message: string) => void;
   onChooseProject: () => void;
   onSend: (text: string, images: UiImage[]) => Promise<boolean>; onAbort: () => void; onSetApproval: (mode: ApprovalMode) => void;
   onSetModel: (model: WireModel) => void; onSetThinking: (level: ThinkingLevel) => void;
   onOpenFile: (path: string) => void; onOpenExternal: (url: string) => void; onOpenDetails: () => void;
+  /** Docked information cards; they live inside the conversation's scroll viewport. */
+  cards?: ReactNode;
+  /** Code-only surface: Chat keeps the conversation and the composer. */
+  showTerminal: boolean;
   pending: boolean; error: string | null; onDismissError: () => void;
 }) {
   const hasMessages = !!view.activeSession?.messages.length;
@@ -29,10 +35,13 @@ export function CodeWorkspace({ view, client, terminalOpen, onCloseTerminal, onR
   return <main className={`workspace ${hasMessages ? 'has-transcript' : 'is-empty'}`}>
     <div className={`workspace-body ${hasMessages ? 'has-transcript' : 'is-empty'}`}>
       <div className="error-slot">{error && <div className="error-banner" role="alert"><WarningCircle size={15} /><span>{error}</span><Button variant="ghost" size="icon" className="icon-button" onClick={onDismissError} aria-label="Dismiss error"><X size={14} /></Button></div>}</div>
-      {hasMessages
-        ? <div className="conversation-region"><ConversationView view={view} onOpenFile={onOpenFile} onOpenExternal={onOpenExternal} /></div>
+      {view.loading ? <div className="conversation-loading" role="status" aria-busy="true"><span className="sr-only">Loading conversation…</span>
+        <SkeletonGroup motion="lockstep"><Skeleton style={{ width: '54%', height: 28, marginLeft: 'auto' }} />
+          <Skeleton style={{ width: '92%', marginTop: 28 }} /><Skeleton style={{ width: '84%', marginTop: 10 }} /><Skeleton style={{ width: '67%', marginTop: 10 }} /></SkeletonGroup>
+      </div> : hasMessages
+        ? <div className={`conversation-region ${cards ? 'has-rail' : ''}`}><ConversationView view={view} cards={cards} onOpenFile={onOpenFile} onOpenExternal={onOpenExternal} /></div>
         : <NewSessionHome view={view} client={client} />}
-      {terminalOpen && view.activeSession?.workspace && <TerminalPanel client={client} workspaceId={view.activeSession.workspace.id} onClose={onCloseTerminal} onError={onReportError} />}
+      {showTerminal && terminalOpen && view.activeSession?.workspace && <TerminalPanel client={client} workspaceId={view.activeSession.workspace.id} onClose={onCloseTerminal} onError={onReportError} />}
       <div className="composer-slot is-docked">
         <div className="composer-column">
           <PromptComposer view={view} client={client} onChooseProject={onChooseProject} onSend={onSend} onAbort={onAbort} onSetApproval={onSetApproval} onSetModel={onSetModel} onSetThinking={onSetThinking} onOpenDetails={onOpenDetails} pending={pending} awaitingInput={awaitingInput} />
@@ -46,7 +55,7 @@ export function CodeWorkspace({ view, client, terminalOpen, onCloseTerminal, onR
 function NewSessionHome({ view, client }: { view: DesktopView; client: WsClient }) {
   return <div className="landing-stage">
     <div className="home-overview">
-      <h1 className="home-greeting"><Asterisk size={22} aria-hidden="true" /><span>What’s up next?</span></h1>
+      <h1 className="home-greeting"><span>What’s up next?</span></h1>
       <HomeUsage client={client} connection={view.connection} booting={view.booting} />
     </div>
   </div>;
@@ -62,8 +71,9 @@ const conversationPositions = new Map<string, { top: number; pinned: boolean }>(
  */
 const SCROLL_FADE_SIZE = 28;
 
-function ConversationView({ view, onOpenFile, onOpenExternal }: { view: DesktopView; onOpenFile: (path: string) => void; onOpenExternal: (url: string) => void }) {
+function ConversationView({ view, cards, onOpenFile, onOpenExternal }: { view: DesktopView; cards?: ReactNode; onOpenFile: (path: string) => void; onOpenExternal: (url: string) => void }) {
   const scrollRef = useRef<HTMLDivElement>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
   const pinned = useRef(true);
   const lastGesture = useRef(0);
   const viewport = useRef({ width: 0, height: 0 });
@@ -77,6 +87,8 @@ function ConversationView({ view, onOpenFile, onOpenExternal }: { view: DesktopV
   const liveTools = new Map(tools.map(tool => [tool.id, tool]));
   for (const [id, result] of nativeResults) liveTools.set(id, { ...liveTools.get(id), ...result, arguments: liveTools.get(id)?.arguments ?? result.arguments });
   const nativeResultIds = new Set(nativeResults.keys());
+  /** One timeline per turn, owned by its last text-bearing assistant message. */
+  const turnMeta = turnMetaIndexes(messages);
   /** Both edge fades stay dormant at the matching edge; only the clipped side feathers. */
   const syncFades = (element: HTMLElement) => {
     const top = element.scrollTop > 2;
@@ -107,6 +119,8 @@ function ConversationView({ view, onOpenFile, onOpenExternal }: { view: DesktopV
       viewport.current = { width: el.clientWidth, height: el.clientHeight };
     });
     observer.observe(el);
+    // Font swaps and preview resizes change the content height without a message update.
+    if (contentRef.current) observer.observe(contentRef.current);
     return () => observer.disconnect();
   }, []);
   const markGesture = () => { lastGesture.current = performance.now(); };
@@ -124,16 +138,19 @@ function ConversationView({ view, onOpenFile, onOpenExternal }: { view: DesktopV
   };
   return <>
     <div className="conversation-scroll" ref={scrollRef} onScroll={onScroll} onWheel={markGesture} onTouchStart={markGesture} onKeyDown={markGesture} aria-label="Conversation">
-      <div className="conversation-column">
-        {messages.map((message, index) => <MessageRow key={`${message.timestamp}-${index}`} message={message} tools={liveTools} messageToolIds={messageToolIds} thinkingLive={!!view.activeSession?.streaming && index === messages.length - 1} onOpenFile={onOpenFile} onOpenExternal={onOpenExternal} />)}
-        {tools.filter(tool => !messageToolIds.has(tool.id) && !nativeResultIds.has(tool.id)).map(tool => <ToolCard key={tool.id} tool={tool} onOpenFile={onOpenFile} />)}
-        {view.runtime.status === 'failed' && <div className="runtime-notice error"><WarningCircle size={15} /><span>{view.runtime.detail ?? 'The last turn failed.'}</span></div>}
-        {view.runtime.status === 'offline' && <div className="runtime-notice error"><WarningCircle size={15} /><span>{view.runtime.detail ?? 'Disconnected from the local server.'} The transcript is read-only until it reconnects.</span></div>}
-        {view.runtime.status === 'stop-requested' && <div className="runtime-notice"><CircleNotch className="spin" size={15} /><span>Stop requested. Waiting for Pi to settle the session…</span></div>}
-        {view.runtime.status === 'working' && <div className="stream-indicator"><span /><span /><span />Generating</div>}
+      <div className={`conversation-flow ${cards ? 'has-rail' : ''}`}>
+        <div className="conversation-column" ref={contentRef}>
+          {messages.map((message, index) => <MessageRow key={`${message.timestamp}-${index}`} message={message} tools={liveTools} messageToolIds={messageToolIds} thinkingLive={!!view.activeSession?.streaming && index === messages.length - 1} showMeta={message.role === 'user' || turnMeta.has(index)} onOpenFile={onOpenFile} onOpenExternal={onOpenExternal} />)}
+          {tools.filter(tool => !messageToolIds.has(tool.id) && !nativeResultIds.has(tool.id)).map(tool => <ToolCard key={tool.id} tool={tool} onOpenFile={onOpenFile} />)}
+          {view.runtime.status === 'failed' && <div className="runtime-notice error"><WarningCircle size={15} /><span>{view.runtime.detail ?? 'The last turn failed.'}</span></div>}
+          {view.runtime.status === 'offline' && <div className="runtime-notice error"><WarningCircle size={15} /><span>{view.runtime.detail ?? 'Disconnected from the local server.'} The transcript is read-only until it reconnects.</span></div>}
+          {view.runtime.status === 'stop-requested' && <div className="runtime-notice"><CircleNotch className="spin" size={15} /><span>Stop requested. Waiting for Pi to settle the session…</span></div>}
+          {view.runtime.status === 'working' && <div className="stream-indicator"><span /><span /><span />Generating</div>}
+        </div>
+        {cards && <div className="information-rail"><div className="information-rail-sticky">{cards}</div></div>}
       </div>
     </div>
-    {showJump && <Button variant="ghost" size="xs" className="jump-latest" onClick={() => { const el = scrollRef.current; if (el) el.scrollTop = el.scrollHeight; pinned.current = true; setShowJump(false); }}><ArrowDown size={14} />Jump to latest</Button>}
+    {showJump && <Button variant="ghost" size="icon" className="jump-latest" aria-label="Jump to latest" title="Jump to latest" onClick={() => { const el = scrollRef.current; if (el) el.scrollTop = el.scrollHeight; pinned.current = true; setShowJump(false); }}><ArrowDown size={15} /></Button>}
     <div className="conversation-fade top" style={{ height: fade.top ? SCROLL_FADE_SIZE : 0 }} aria-hidden="true" />
     <div className="conversation-fade bottom" style={{ height: fade.bottom ? SCROLL_FADE_SIZE : 0 }} aria-hidden="true" />
   </>;
@@ -144,7 +161,7 @@ type MessageGroup =
   | { kind: 'images'; items: Extract<UiContent, { type: 'image' }>[] }
   | { kind: 'single'; content: UiContent };
 
-function MessageRow({ message, tools, messageToolIds, thinkingLive, onOpenFile, onOpenExternal }: { message: UiMessage; tools: Map<string, UiToolActivity>; messageToolIds: Set<string>; thinkingLive: boolean; onOpenFile: (path: string) => void; onOpenExternal: (url: string) => void }) {
+function MessageRow({ message, tools, messageToolIds, thinkingLive, showMeta, onOpenFile, onOpenExternal }: { message: UiMessage; tools: Map<string, UiToolActivity>; messageToolIds: Set<string>; thinkingLive: boolean; showMeta: boolean; onOpenFile: (path: string) => void; onOpenExternal: (url: string) => void }) {
   if (message.role === 'toolResult') {
     if (message.toolCallId && messageToolIds.has(message.toolCallId)) return null;
     return <ToolCard tool={toolResultActivity(message)} onOpenFile={onOpenFile} />;
@@ -167,8 +184,11 @@ function MessageRow({ message, tools, messageToolIds, thinkingLive, onOpenFile, 
       : <ContentBlock key={index} content={group.content} rich={message.role !== 'user'} thinkingLive={thinkingLive && index === groups.length - 1} onOpenFile={onOpenFile} onOpenExternal={onOpenExternal} />)}
     {message.errorMessage && <div className="message-error"><WarningCircle size={14} />{message.errorMessage}</div>}
   </>;
+  const plainText = message.content.map(part => part.type === 'text' ? part.text : '').filter(Boolean).join('\n\n');
   return <article className={`message ${message.role}`}>
-    {message.role === 'user' ? <UserMessageBubble>{content}</UserMessageBubble> : <AssistantMessage>{content}</AssistantMessage>}
+    {message.role === 'user'
+      ? <UserMessageBubble timestamp={message.timestamp} plainText={plainText}>{content}</UserMessageBubble>
+      : <AssistantMessage timestamp={message.timestamp} plainText={plainText} showMeta={showMeta}>{content}</AssistantMessage>}
   </article>;
 }
 
@@ -221,7 +241,7 @@ export function ExtensionDialog({ request, startup, onReply, pending, error }: {
   });
   return <div className="modal-scrim" ref={layer} onMouseDown={event => { if (event.target === event.currentTarget && !pending) onReply(null); }}>
     <form className="rename-dialog" role="dialog" aria-modal="true" aria-labelledby="extension-dialog-title"
-      onKeyDown={event => { if (event.key === 'Escape' && !pending) { event.preventDefault(); onReply(null); } }}
+      onKeyDown={event => { if (event.key === 'Escape' && !pending && !event.nativeEvent.isComposing && event.nativeEvent.keyCode !== 229) { event.preventDefault(); onReply(null); } }}
       onSubmit={event => { event.preventDefault(); if (request.kind === 'input' || request.kind === 'editor') onReply(text); }}>
       <h2 id="extension-dialog-title">{request.title}</h2>
       {startup && <p className="detail-subtle">Session initialization request · {request.sessionId.slice(0, 8)}</p>}

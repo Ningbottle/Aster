@@ -1,20 +1,22 @@
-import { useEffect, useId, useRef, useState } from 'react';
+import { useId, useState } from 'react';
 import {
   CaretDown,
   CaretRight,
-  Check,
   CircleNotch,
-  Copy,
-  MagnifyingGlass,
   TerminalWindow,
   WarningCircle,
-  Wrench,
 } from '@phosphor-icons/react';
 import type { UiImage, UiToolActivity } from './model';
 import { CdsButton as Button } from './cds/Button';
+import { CopyButton } from './CopyButton';
 import { FileIcon } from './FileIcon';
 import { ImageBlock } from './ImageAttachment';
 import { diffForToolArgs, languageOf, normalizeToolName, splitRows, toolFilePath, type DiffHunk, type DiffLine, type LineDiff } from './diff';
+import { summarizeTool, summarizeTools, toolKind } from './tool-summary';
+import { CodeText } from './CodeText';
+import { MAX_HIGHLIGHT_LENGTH } from './syntax';
+
+const LARGE_OUTPUT_NOTE = 'Large result shown as plain text; syntax highlighting stops at 120k characters.';
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   return typeof value === 'object' && value !== null && !Array.isArray(value) ? value as Record<string, unknown> : null;
@@ -80,49 +82,19 @@ function StatBadge({ diff }: { diff: LineDiff | null }) {
   </span>;
 }
 
-function ToolGlyph({ tool, path }: { tool: UiToolActivity; path?: string }) {
-  if (tool.status === 'running') return <CircleNotch className="spin" size={15} aria-label="Running" />;
-  if (tool.status === 'failed') return <WarningCircle className="tool-failed" size={15} aria-label="Failed" />;
-  if (path) return <FileIcon path={path} size={15} />;
-  if (normalizeToolName(tool.name) === 'bash') return <TerminalWindow size={15} />;
-  if (['grep', 'search', 'web_search'].includes(normalizeToolName(tool.name))) return <MagnifyingGlass size={15} />;
-  return <Wrench size={15} />;
-}
-
-function summaryLabel(tool: UiToolActivity, path: string | undefined) {
-  switch (normalizeToolName(tool.name)) {
-    case 'read': return path ? 'Read' : 'Read file';
-    case 'edit': return path ? 'Edited' : 'Edited file';
-    case 'write': return path ? 'Wrote' : 'Wrote file';
-    case 'bash': return 'Ran command';
-    case 'grep': return 'Searched';
-    case 'glob': return 'Found files';
-    case 'list':
-    case 'ls': return 'Listed';
-    case 'task': return 'Ran task';
-    case 'web_fetch': return 'Fetched';
-    case 'web_search': return 'Searched the web';
-    default: return tool.name;
-  }
+/** Only a state that needs attention keeps a glyph; successful rows are text-led. */
+function ToolGlyph({ tool }: { tool: UiToolActivity }) {
+  if (tool.status === 'running') return <CircleNotch className="spin" size={14} aria-label="Running" />;
+  if (tool.status === 'failed') return <WarningCircle className="tool-failed" size={14} aria-label="Failed" />;
+  return null;
 }
 
 function DiffCard({ path, diff, onOpenFile }: { path: string; diff: LineDiff; onOpenFile?: (path: string) => void }) {
   const [mode, setMode] = useState<'unified' | 'split'>('unified');
-  const [copied, setCopied] = useState(false);
-  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  useEffect(() => () => { if (timer.current) clearTimeout(timer.current); }, []);
-  function copyDiff() {
-    if (!navigator.clipboard) return;
-    const text = diff.hunks.map(hunk => [
-      `@@ -${hunk.oldStart},${hunk.oldCount} +${hunk.newStart},${hunk.newCount} @@`,
-      ...hunk.lines.map(line => `${line.kind === 'add' ? '+' : line.kind === 'del' ? '-' : ' '}${line.text}`),
-    ].join('\n')).join('\n');
-    void navigator.clipboard.writeText(text).then(() => {
-      setCopied(true);
-      if (timer.current) clearTimeout(timer.current);
-      timer.current = setTimeout(() => setCopied(false), 2500);
-    }, () => setCopied(false));
-  }
+  const diffText = diff.hunks.map(hunk => [
+    `@@ -${hunk.oldStart},${hunk.oldCount} +${hunk.newStart},${hunk.newCount} @@`,
+    ...hunk.lines.map(line => `${line.kind === 'add' ? '+' : line.kind === 'del' ? '-' : ' '}${line.text}`),
+  ].join('\n')).join('\n');
   const language = languageOf(path);
   /** Split only helps when a line was removed; a pure write has nothing to compare. */
   const canSplit = diff.additions > 0 && diff.deletions > 0;
@@ -138,37 +110,35 @@ function DiffCard({ path, diff, onOpenFile }: { path: string; diff: LineDiff; on
         <button type="button" aria-pressed={mode === 'unified'} onClick={() => setMode('unified')}>Unified</button>
         {canSplit && <button type="button" aria-pressed={mode === 'split'} onClick={() => setMode('split')}>Split</button>}
       </div>
-      <Button variant="ghost" size="icon" className="diff-copy" aria-label={copied ? 'Diff copied' : 'Copy diff'} title={copied ? 'Copied' : 'Copy diff'} onClick={copyDiff}>
-        {copied ? <Check size={14} /> : <Copy size={14} />}
-      </Button>
+      <CopyButton text={diffText} label="Copy diff" className="diff-copy" iconSize={14} />
     </div>
     <div className="diff-scroll">
-      {diff.hunks.map((hunk, index) => <DiffHunkView hunk={hunk} mode={canSplit ? mode : 'unified'} key={index} />)}
+      {diff.hunks.map((hunk, index) => <DiffHunkView hunk={hunk} mode={canSplit ? mode : 'unified'} language={language} key={index} />)}
     </div>
   </div>;
 }
 
-function DiffHunkView({ hunk, mode }: { hunk: DiffHunk; mode: 'unified' | 'split' }) {
+function DiffHunkView({ hunk, mode, language }: { hunk: DiffHunk; mode: 'unified' | 'split'; language: string | null }) {
   const rows = mode === 'split' ? splitRows(hunk.lines) : null;
   return <div className="diff-hunk">
     <div className="diff-hunk-head">@@ -{hunk.oldStart},{hunk.oldCount} +{hunk.newStart},{hunk.newCount} @@</div>
     {rows
       ? <div className="diff-split">
-        <table className="diff-table diff-side"><tbody>{rows.map((row, index) => <DiffRow line={row.left} key={index} />)}</tbody></table>
-        <table className="diff-table diff-side"><tbody>{rows.map((row, index) => <DiffRow line={row.right} key={index} />)}</tbody></table>
+        <table className="diff-table diff-side"><tbody>{rows.map((row, index) => <DiffRow line={row.left} language={language} key={index} />)}</tbody></table>
+        <table className="diff-table diff-side"><tbody>{rows.map((row, index) => <DiffRow line={row.right} language={language} key={index} />)}</tbody></table>
       </div>
-      : <table className="diff-table"><tbody>{hunk.lines.map((line, index) => <DiffRow line={line} key={index} />)}</tbody></table>}
+      : <table className="diff-table"><tbody>{hunk.lines.map((line, index) => <DiffRow line={line} language={language} key={index} />)}</tbody></table>}
   </div>;
 }
 
 /** Two gutters keep added and removed line numbers aligned with the source. */
-function DiffRow({ line }: { line: DiffLine | null }) {
+function DiffRow({ line, language }: { line: DiffLine | null; language: string | null }) {
   if (!line) return <tr className="diff-row blank"><td className="diff-num" /><td className="diff-num" /><td className="diff-mark" /><td className="diff-code" /></tr>;
   return <tr className={`diff-row ${line.kind}`}>
     <td className="diff-num">{line.oldNumber ?? ''}</td>
     <td className="diff-num">{line.newNumber ?? ''}</td>
     <td className="diff-mark" aria-hidden="true">{line.kind === 'add' ? '+' : line.kind === 'del' ? '−' : ''}</td>
-    <td className="diff-code">{line.text || ' '}</td>
+    <td className="diff-code"><CodeText text={line.text || ' '} language={language} /></td>
   </tr>;
 }
 
@@ -178,65 +148,63 @@ function GenericDetail({ tool, path }: { tool: UiToolActivity; path?: string }) 
   const images = toolImages(tool);
   if (normalizeToolName(tool.name) === 'bash' && command) {
     return <div className="bash-card">
-      <div className="bash-head"><TerminalWindow size={14} /><span>bash</span>{path && <span className="bash-cwd">{path}</span>}</div>
-      <pre className="bash-command"><span aria-hidden="true">$ </span>{command}</pre>
+      <div className="bash-head"><TerminalWindow size={14} /><span>bash</span>{path && <span className="bash-cwd" title={path}>{path}</span>}</div>
+      <div className="bash-command-row">
+        <pre className="bash-command"><span className="bash-prompt" aria-hidden="true">$ </span><CodeText text={command} language="bash" /></pre>
+        <CopyButton text={command} label="Copy command" className="bash-copy" />
+      </div>
+      {output && output.length > MAX_HIGHLIGHT_LENGTH && <p className="tool-output-note" role="note">{LARGE_OUTPUT_NOTE}</p>}
       {output && <pre className="bash-output">{output}</pre>}
       {images.length > 0 && <ImageBlock images={images} />}
     </div>;
   }
-  return <div className="tool-detail">
-    {tool.arguments !== null && tool.arguments !== undefined && <div><span>Arguments</span><pre>{safeJson(tool.arguments)}</pre></div>}
-    {(output !== undefined || images.length > 0) && <div><span>Result</span>
+  const read = toolKind(tool.name) === 'read';
+  const argumentsBlock = tool.arguments !== null && tool.arguments !== undefined
+    ? read
+      ? <details className="tool-arguments"><summary>Arguments</summary><pre>{safeJson(tool.arguments)}</pre></details>
+      : <div><div className="tool-section-head"><span>Arguments</span></div><pre>{safeJson(tool.arguments)}</pre></div>
+    : null;
+  const resultBlock = output !== undefined || images.length > 0
+    ? <div>
+      <div className="tool-section-head"><span>Result</span>{output !== undefined && <CopyButton text={output} label="Copy result" className="tool-copy" />}</div>
+      {output !== undefined && output.length > MAX_HIGHLIGHT_LENGTH && <p className="tool-output-note" role="note">{LARGE_OUTPUT_NOTE}</p>}
       {output !== undefined && <pre>{output}</pre>}
       {images.length > 0 && <ImageBlock images={images} />}
-    </div>}
+    </div>
+    : null;
+  return <div className="tool-detail">
+    {/* A read is about the file it returned; the raw argument JSON is secondary. */}
+    {read ? <>{resultBlock}{argumentsBlock}</> : <>{argumentsBlock}{resultBlock}</>}
     {output === undefined && images.length === 0 && tool.status === 'unknown' && <div className="tool-unknown">No final result was observed for this tool.</div>}
     {output === undefined && images.length === 0 && tool.status === 'running' && <div className="tool-unknown">Still running.</div>}
   </div>;
 }
 
 export function ToolCard({ tool, initialOpen, onOpenFile }: { tool: UiToolActivity; initialOpen?: boolean; onOpenFile?: (path: string) => void }) {
-  const [userOpen, setUserOpen] = useState<boolean | null>(initialOpen === undefined ? null : initialOpen);
+  const [userOpen, setUserOpen] = useState<boolean | null>(initialOpen ?? null);
   const detailId = useId();
   const path = toolFilePath(tool.arguments);
   const command = commandText(tool);
   const diff = toolStats(tool);
   const hasDiff = !!diff && (diff.additions > 0 || diff.deletions > 0);
-  const open = userOpen ?? hasDiff;
-  const label = summaryLabel(tool, path);
+  /** A late result never expands a row on its own; only an explicit choice opens it. */
+  const open = userOpen ?? false;
+  const summary = summarizeTool(tool);
   return <section className={`tool-card ${tool.status}`} aria-busy={tool.status === 'running'}>
     <Button variant="ghost" size="xs" className="tool-summary" onClick={() => setUserOpen(!open)} aria-expanded={open} aria-controls={detailId}>
-      <ToolGlyph tool={tool} path={path} />
-      <span className="tool-label">{label}</span>
-      {path && normalizeToolName(tool.name) !== 'bash' && <span className="tool-path" title={path}>{path}</span>}
+      <ToolGlyph tool={tool} />
+      <span className="tool-label">{summary.label}</span>
+      {summary.file && <span className="tool-path" title={summary.path ?? undefined}>{summary.file}</span>}
       {command && <span className="tool-path tool-command" title={command}>{command}</span>}
       <StatBadge diff={diff} />
       {tool.status === 'failed' && <span className="tool-status">Failed</span>}
       {tool.status === 'unknown' && <span className="tool-status">Result unknown</span>}
       <span className="tool-chevron" aria-hidden="true">{open ? <CaretDown size={13} /> : <CaretRight size={13} />}</span>
     </Button>
-    {open && <div id={detailId} role="region" aria-label={`${label} details`}>
+    {open && <div id={detailId} role="region" aria-label={`${summary.label} details`}>
       {hasDiff && path ? <DiffCard path={path} diff={diff} onOpenFile={onOpenFile} /> : <GenericDetail tool={tool} path={path} />}
     </div>}
   </section>;
-}
-
-function groupCountLabel(tools: UiToolActivity[]): string {
-  const counts = new Map<string, number>();
-  for (const tool of tools) {
-    const name = normalizeToolName(tool.name);
-    counts.set(name, (counts.get(name) ?? 0) + 1);
-  }
-  const parts: string[] = [];
-  for (const [name, count] of counts) {
-    if (name === 'read') parts.push(count === 1 ? 'Read 1 file' : `Read ${count} files`);
-    else if (name === 'edit') parts.push(count === 1 ? 'Edited 1 file' : `Edited ${count} files`);
-    else if (name === 'write') parts.push(count === 1 ? 'Wrote 1 file' : `Wrote ${count} files`);
-    else if (name === 'bash') parts.push(`Ran ${count} command${count === 1 ? '' : 's'}`);
-    else if (name === 'grep') parts.push(`Searched ${count} time${count === 1 ? '' : 's'}`);
-    else parts.push(`${name} × ${count}`);
-  }
-  return parts.join(', ');
 }
 
 export function ToolGroup({ tools, onOpenFile }: { tools: UiToolActivity[]; onOpenFile?: (path: string) => void }) {
@@ -246,8 +214,6 @@ export function ToolGroup({ tools, onOpenFile }: { tools: UiToolActivity[]; onOp
   const failed = tools.some(tool => tool.status === 'failed');
   const running = tools.some(tool => tool.status === 'running');
   const unknown = tools.some(tool => tool.status === 'unknown');
-  const readsOnly = tools.every(tool => normalizeToolName(tool.name) === 'read');
-  const readCount = new Set(tools.map(tool => toolFilePath(tool.arguments)).filter((path): path is string => !!path)).size || tools.length;
   const stats = tools.reduce<LineDiff>((total, tool) => {
     const diff = toolStats(tool);
     return diff
@@ -257,7 +223,7 @@ export function ToolGroup({ tools, onOpenFile }: { tools: UiToolActivity[]; onOp
   return <section className={`activity-group ${failed ? 'failed' : ''}`} aria-busy={running}>
     <Button variant="ghost" size="xs" className="activity-summary" aria-expanded={expanded} aria-controls={detailId} onClick={() => setExpanded(value => !value)}>
       {running && <CircleNotch size={14} className="spin" aria-label="Running" />}
-      <span className="activity-label">{readsOnly ? (readCount === 1 ? 'Read 1 file' : `Read ${readCount} files`) : groupCountLabel(tools)}</span>
+      <span className="activity-label">{summarizeTools(tools)}</span>
       <StatBadge diff={stats} />
       {failed && <span className="activity-state">Failed</span>}
       {unknown && <span className="activity-state">Result unknown</span>}

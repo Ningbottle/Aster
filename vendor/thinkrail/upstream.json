@@ -31,7 +31,11 @@
     },
     {
       "files": ["packages/contracts/src/{index,wsProtocol,usage}.ts", "packages/server/src/host/handlers.ts", "packages/server/src/agent/{agentSessionManager,usageStats}.ts"],
-      "reason": "Add the Aster-only read-only usage.getSummary WS contract over native Pi entries in registered workspaces. No parallel conversation store, disk-session attachment, credential reads or telemetry."
+      "reason": "Add the Aster-only read-only usage.getSummary WS contract over native Pi entries in registered workspaces. Narrow the validated usage counter tuple and the fixed 24-hour bucket index for noUncheckedIndexedAccess without changing missing-usage semantics. No parallel conversation store, disk-session attachment, credential reads or telemetry."
+    },
+    {
+      "files": ["packages/contracts/src/{domain,wsProtocol}.ts", "packages/server/src/host/handlers.ts", "packages/server/src/agent/agentSessionManager.ts"],
+      "reason": "Add the live Pi model and effective thinking level to session.setModel and session.setThinkingLevel acknowledgements, with a shared runtime guard. Existing Ack clients can ignore the additive fields; this Aster extension is not a new upstream protocol version."
     }
   ]
 }

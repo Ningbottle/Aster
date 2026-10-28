@@ -64,7 +64,7 @@ import type {
 	TurnChangeSet,
 	Workspace,
 } from "./domain";
-import { isDelegationRunDetails } from "./domain";
+import { isDelegationRunDetails, isThinkingLevel } from "./domain";
 import type {
 	ApprovalMode,
 	AskUserAnswersDetails,
@@ -513,6 +513,46 @@ export interface Ack {
 	ok: true;
 }
 
+/** Aster's additive acknowledgement for a live session's model or thinking change. */
+export interface SessionModelSettingsResult extends Ack {
+	model: WireModel | null;
+	thinkingLevel: ThinkingLevel;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isWireModelSnapshot(value: unknown): value is WireModel {
+	if (!isRecord(value)) return false;
+	if (
+		typeof value.id !== "string" || typeof value.name !== "string" ||
+		typeof value.provider !== "string" || typeof value.contextWindow !== "number" ||
+		!Number.isFinite(value.contextWindow) || typeof value.reasoning !== "boolean" ||
+		!Array.isArray(value.thinkingLevels) || !value.thinkingLevels.every(isThinkingLevel)
+	) return false;
+	if (value.cost !== undefined && (
+		!isRecord(value.cost) || typeof value.cost.input !== "number" ||
+		!Number.isFinite(value.cost.input) || typeof value.cost.output !== "number" ||
+		!Number.isFinite(value.cost.output)
+	)) return false;
+	if (value.input !== undefined && (
+		!Array.isArray(value.input) || !value.input.every((item) => item === "text" || item === "image")
+	)) return false;
+	if (value.auth !== undefined && (
+		!isRecord(value.auth) ||
+		!(["oauth", "api-key", "env", "central", "other"] as readonly unknown[]).includes(value.auth.kind) ||
+		(value.auth.detail !== undefined && typeof value.auth.detail !== "string")
+	)) return false;
+	return true;
+}
+
+/** Reject a legacy bare Ack or malformed snapshot before the renderer treats it as confirmed. */
+export function isSessionModelSettingsResult(value: unknown): value is SessionModelSettingsResult {
+	return isRecord(value) && value.ok === true && isThinkingLevel(value.thinkingLevel) &&
+		(value.model === null || isWireModelSnapshot(value.model));
+}
+
 export interface ReviewSendResult {
 	sessionId: string;
 	model: WireModel | null;
@@ -832,8 +872,8 @@ export interface WsMethodMap {
 		params: { workspaceId: string; sessionId: string; title: string };
 		result: Ack;
 	};
-	"session.setModel": { params: { sessionId: string; model: WireModel }; result: Ack };
-	"session.setThinkingLevel": { params: { sessionId: string; level: ThinkingLevel }; result: Ack };
+	"session.setModel": { params: { sessionId: string; model: WireModel }; result: SessionModelSettingsResult };
+	"session.setThinkingLevel": { params: { sessionId: string; level: ThinkingLevel }; result: SessionModelSettingsResult };
 	"session.setApproval": { params: { sessionId: string; mode: ApprovalMode }; result: Ack };
 	"session.compact": { params: { sessionId: string; instructions?: string }; result: Ack };
 	"session.getStats": { params: { sessionId: string }; result: SessionStats };

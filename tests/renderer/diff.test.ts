@@ -7,7 +7,6 @@ import {
   languageOf,
   normalizeToolName,
   splitRows,
-  summarizeChanges,
   toolFilePath,
 } from '../../src/renderer/diff';
 
@@ -82,7 +81,6 @@ describe('tool argument extraction', () => {
     expect(extractEditPairs({ path: 'a.ts' })).toBeNull();
     expect(extractEditPairs(null)).toBeNull();
     expect(diffForToolArgs('edit', { path: 'a.ts' })).toBeNull();
-    expect(summarizeChanges([{ name: 'edit', arguments: { path: 'a.ts' } }])).toEqual([]);
   });
 
   test('reads write content and builds an all-add diff', () => {
@@ -93,18 +91,9 @@ describe('tool argument extraction', () => {
     expect(diff?.hunks[0]).toMatchObject({ oldStart: 0, oldCount: 0, newStart: 1, newCount: 2 });
   });
 
-  test('aggregates real per-file changes and normalizes tool names', () => {
+  test('normalizes tool names and reads file paths', () => {
     expect(normalizeToolName('builtin.Edit')).toBe('edit');
     expect(toolFilePath({ file_path: 'src/a.ts' })).toBe('src/a.ts');
-    const changes = summarizeChanges([
-      { name: 'edit', arguments: { path: 'src/a.ts', oldText: 'a', newText: 'a\nb' } },
-      { name: 'write', arguments: { path: 'src/b.ts', content: 'x\ny' } },
-      { name: 'read', arguments: { path: 'src/c.ts' } },
-    ]);
-    expect(changes).toEqual([
-      { path: 'src/a.ts', additions: 1, deletions: 0 },
-      { path: 'src/b.ts', additions: 2, deletions: 0 },
-    ]);
   });
 });
 

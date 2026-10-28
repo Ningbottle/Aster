@@ -1,30 +1,14 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef } from 'react';
 import { CaretDown, FolderSimple, X } from '@phosphor-icons/react';
 import type { UiMessage } from './model';
 import type { DesktopView } from './desktop-state';
 import { CdsButton as Button } from './cds/Button';
-import { ArtifactFrame } from './cds/ArtifactFrame';
-import { ContextRing } from './ContextRing';
 import { FileIcon } from './FileIcon';
-import { needsBinary, previewKind, type PreviewKind } from './preview-kind';
-import { PdfPreview } from './PdfPreview';
-import { RichText } from './RichText';
-import { ApiUsageRows, ContextUsageMeter } from './UsageCard';
+import { ApiUsageRows } from './UsageCard';
 import { contextWindowUsage } from './usage';
 import type { WsClient } from './client';
 import { TodoSection } from './TodoSection';
-
-/** Preview caps keep a large generated file readable without freezing the panel. */
-const PREVIEW_LIMIT = 120_000;
-
-interface PreviewState {
-  path: string;
-  kind: PreviewKind;
-  text?: string;
-  data?: string;
-  mime?: string;
-  byteLength: number | null;
-}
+import { baseName } from './path-display';
 
 function outputPaths(messages: UiMessage[]) {
   const succeeded = new Set(messages.filter(message => message.role === 'toolResult' && !message.isError).map(message => message.toolCallId));
@@ -37,17 +21,25 @@ function outputPaths(messages: UiMessage[]) {
   return [...paths];
 }
 
-const baseName = (path: string) => path.replaceAll('\\', '/').split('/').pop() || path;
+/** The card keeps one hairline bar like the reference; the detailed rows live under API usage. */
+function ContextUsageBar({ usage }: { usage: ReturnType<typeof contextWindowUsage> }) {
+  const percent = usage.percent === null ? 0 : Math.max(0, Math.min(100, usage.percent));
+  return <div className="context-bar" role="meter" aria-valuemin={0} aria-valuemax={100} aria-valuenow={usage.percent ?? undefined} aria-label="Context window usage">
+    <span style={{ width: `${percent}%` }} />
+  </div>;
+}
 
-export function SessionDetails({ view, client, onClose, onOpenFile, onOpenExternal, previewPath, onPreviewPath, focusContext = 0 }: {
+/**
+ * Fixed-width information cards: Environment, Context, Outputs and the native
+ * Todo list. The file viewer is a separate pane (FilePreview) and is never
+ * opened or closed from here.
+ */
+export function SessionDetails({ view, client, onClose, onSelectOutput, selectedOutput, focusContext = 0 }: {
   view: DesktopView;
   client: WsClient;
   onClose: () => void;
-  onOpenFile: (path: string) => void;
-  onOpenExternal?: (url: string) => void;
-  /** File the panel is previewing; links and Outputs both raise it through the app. */
-  previewPath: string | null;
-  onPreviewPath: (path: string | null) => void;
+  onSelectOutput: (path: string) => void;
+  selectedOutput: string | null;
   /** Monotonic token from the composer card; 0 means no pending focus request. */
   focusContext?: number;
 }) {
@@ -58,32 +50,7 @@ export function SessionDetails({ view, client, onClose, onOpenFile, onOpenExtern
   const stats = active?.stats ?? null;
   const usage = contextWindowUsage(stats);
   const outputs = outputPaths(messages);
-  const workspaceId = workspace?.id ?? null;
   const contextCard = useRef<HTMLDetailsElement>(null);
-  const [preview, setPreview] = useState<PreviewState | null>(null);
-  const [previewError, setPreviewError] = useState<string | null>(null);
-  /** A different path is loading; keep the old bytes out of the new header. */
-  const ready = preview && preview.path === previewPath ? preview : null;
-  /** Images and PDFs come back as base64; text files keep their own read path. */
-  useEffect(() => {
-    if (!previewPath || !workspaceId) { setPreview(null); setPreviewError(null); return; }
-    let active = true;
-    setPreviewError(null);
-    const path = previewPath;
-    const load = needsBinary(path)
-      ? client.request('fs.readBinary', { workspaceId, path }).then(result => ({
-        path, kind: previewKind(path, false), data: result.data, mime: result.mime, byteLength: result.byteLength,
-      } as PreviewState))
-      : client.request('fs.readFile', { workspaceId, path }).then(result => ({
-        path, kind: previewKind(path, result.meta.text), text: result.content, byteLength: result.meta.byteLength,
-      } as PreviewState));
-    void load.then(state => { if (active) setPreview(state); }, cause => {
-      if (!active) return;
-      setPreview(null);
-      setPreviewError(cause instanceof Error ? cause.message : String(cause));
-    });
-    return () => { active = false; };
-  }, [previewPath, workspaceId, client]);
   useEffect(() => {
     if (!focusContext) return;
     const card = contextCard.current;
@@ -109,16 +76,16 @@ export function SessionDetails({ view, client, onClose, onOpenFile, onOpenExtern
         </>
         : <p className="detail-subtle">Choose a project folder to begin.</p>}
     </details>
-    <details className="info-card context-card" open ref={contextCard}>
+    <details className="info-card context-card" ref={contextCard}>
       <summary>
         <span>Context</span>
         <CaretDown className="summary-caret" size={10} />
         <span className="context-summary-metrics">
-          <ContextRing usage={usage} size={11} decorative />
           <span>{usage.percentLabel ?? '—'}</span>
+          <span className="context-mini" aria-hidden="true"><span style={{ width: `${usage.percent === null ? 0 : Math.max(0, Math.min(100, usage.percent))}%` }} /></span>
         </span>
       </summary>
-      <ContextUsageMeter usage={usage} />
+      <ContextUsageBar usage={usage} />
       <details className="api-usage">
         <summary><CaretDown className="summary-caret" size={10} />API usage · session total</summary>
         <ApiUsageRows stats={stats} />
@@ -129,38 +96,14 @@ export function SessionDetails({ view, client, onClose, onOpenFile, onOpenExtern
       <summary><span>Outputs</span><CaretDown className="summary-caret" size={10} /></summary>
       {outputs.length
         ? <ul className="output-files">{outputs.map(path => <li key={path}>
-          <button type="button" className="output-row" aria-pressed={previewPath === path} title={`Preview ${path}`}
-            onClick={() => onPreviewPath(previewPath === path ? null : path)}>
+          <button type="button" className="output-row" aria-pressed={selectedOutput === path} title={`Preview ${path}`}
+            onClick={() => onSelectOutput(path)}>
             <FileIcon path={path} size={14} />
             <span>{baseName(path)}</span>
           </button>
         </li>)}</ul>
         : <p className="detail-subtle">No files written in this session.</p>}
-      {previewError && <p className="detail-subtle output-error" role="alert">{previewError}</p>}
-      {previewPath && !ready && !previewError && <p className="detail-subtle">Loading preview…</p>}
     </details>
-    {ready && <section className="details-preview" aria-label={`Preview of ${ready.path}`}>
-      <div className="details-preview-head">
-        <FileIcon path={ready.path} size={14} />
-        <span className="details-preview-path" title={ready.path}>{baseName(ready.path)}</span>
-        <Button variant="ghost" size="xs" className="details-preview-open" onClick={() => onOpenFile(ready.path)}>Open</Button>
-        <Button variant="ghost" size="icon" className="icon-button" aria-label="Close preview" onClick={() => onPreviewPath(null)}><X size={13} /></Button>
-      </div>
-      {ready.kind === 'image' && ready.data
-        ? <img className="details-preview-image" src={`data:${ready.mime};base64,${ready.data}`} alt={baseName(ready.path)} />
-        : ready.kind === 'pdf'
-          ? ready.data
-            ? <PdfPreview data={ready.data} />
-            : <p className="detail-subtle details-preview-note">Preparing PDF…</p>
-          : ready.kind === 'markdown'
-            ? <div className="details-preview-markdown"><RichText text={(ready.text ?? '').slice(0, PREVIEW_LIMIT)} onOpenFile={onOpenFile} onOpenExternal={onOpenExternal} /></div>
-            : ready.kind === 'html'
-              ? <div className="details-preview-html"><ArtifactFrame html={ready.text ?? ''} title={ready.path} onError={cause => setPreviewError(String(cause))} /></div>
-              : ready.kind === 'text'
-                ? <pre className="details-preview-text">{(ready.text ?? '').slice(0, PREVIEW_LIMIT)}</pre>
-                : <p className="detail-subtle details-preview-note">Binary file{ready.byteLength === null ? '' : ` · ${ready.byteLength.toLocaleString()} bytes`}.</p>}
-      {ready.kind === 'text' && (ready.text?.length ?? 0) > PREVIEW_LIMIT && <p className="detail-footnote details-preview-note">Preview truncated at {Math.round(PREVIEW_LIMIT / 1000)}k characters.</p>}
-    </section>}
     {active && workspace && <TodoSection key={`${workspace.id}:${active.session.sessionId}`} client={client} workspaceId={workspace.id} sessionId={active.session.sessionId} connection={view.connection} />}
   </aside>;
 }

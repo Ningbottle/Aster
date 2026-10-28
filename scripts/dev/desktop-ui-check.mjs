@@ -7,6 +7,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, 
 import { homedir } from 'node:os';
 import { isAbsolute, join, relative, resolve } from 'node:path';
 import { fixtureModelsJson, FIXTURE_MARKERS, startFixtureProvider } from '../../tests/fixtures/fixture-provider.mjs';
+import { installWireObserver, verifyEffort, verifyCompactWindow, verifyShellMenus, verifyFonts, verifyCodeHighlight, verifyRightCards, verifyPreviewContext, verifyWorkspaceLayout, verifySidebar, verifyLoading, verifyDraftRecovery } from './desktop-ui-alignment.mjs';
 
 const require = createRequire(import.meta.url);
 const repo = resolve(import.meta.dirname, '../..');
@@ -194,6 +195,12 @@ function check(name, condition, detail) {
 
 async function capture(name) {
   const path = join(outputPath, name);
+  // Let menu/drawer entry finish; loading skeletons and stream indicators remain animated.
+  await page.evaluate(async () => {
+    const finite = document.getAnimations().filter(animation => animation.playState === 'running'
+      && Number.isFinite(animation.effect?.getComputedTiming().iterations));
+    await Promise.allSettled(finite.map(animation => animation.finished));
+  });
   await page.screenshot({ path, fullPage: false });
   const png = readFileSync(path);
   const windowBounds = await electronApp.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].getBounds());
@@ -218,7 +225,7 @@ async function capture(name) {
 }
 
 async function waitReady(timeout = 60_000) {
-  await page.locator('.sidebar-footer > .sr-only').filter({ hasText: 'Ready' }).waitFor({ timeout });
+  await page.locator('.sidebar-brand > .sr-only').filter({ hasText: 'Ready' }).waitFor({ timeout });
 }
 
 /** Cancellation markers arrive on the fixture stream after the UI settles; wait for this turn's own events. */
@@ -365,8 +372,12 @@ function toolContents(messages) {
 }
 
 async function openToolDetails() {
-  const summary = page.locator('.activity-summary').first();
-  if (await summary.count()) {
+  // A turn can group several tools; every collapsed group has to be opened
+  // before the individual cards exist in the DOM.
+  const summaries = page.locator('.activity-summary');
+  const count = await summaries.count();
+  for (let index = 0; index < count; index += 1) {
+    const summary = summaries.nth(index);
     if ((await summary.getAttribute('aria-expanded')) !== 'true') await summary.click();
   }
 }
@@ -417,6 +428,9 @@ async function main() {
   page.on('pageerror', error => pageErrors.push(error.message.slice(0, 240)));
   page.on('console', message => { if (message.type() === 'error') consoleErrors.push(message.text().slice(0, 240)); });
   await page.waitForLoadState('domcontentloaded');
+  await page.addInitScript(installWireObserver);
+  // Install before the first socket handler is assigned so replies are observed too.
+  await page.reload();
   await electronApp.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setContentSize(1280, 840));
   await page.waitForFunction(() => window.innerWidth >= 1270 && window.innerHeight >= 800);
 
@@ -440,10 +454,17 @@ async function main() {
   await page.getByRole('textbox', { name: 'Message Aster' }).waitFor();
   await page.locator('.mode-switch').waitFor();
   await waitReady();
-  check('open folder creates a default workspace through WS', await page.locator('.env-row').filter({ hasText: 'repo' }).count() > 0);
+  check('open folder creates a default workspace through WS', await page.locator('.session-heading').filter({ hasText: 'repo' }).count() > 0);
+  const modeLabels = await page.locator('.mode-switch').innerText();
+  check('the sidebar offers exactly the two workspaces the product has', await page.locator('.mode-switch [role="radio"]').count() === 2
+    && ['Chat', 'Code'].every(label => modeLabels.includes(label)));
 
   await createSessionFromUi();
+  check('New starts a real session directly without a settings drawer', await page.locator('.new-session-drawer').count() === 0
+    && await page.evaluate(() => window.__asterTestWire.requests.filter(item => item.method === 'session.create').length) >= 2);
   await capture('desktop-ui-new-session-1280x840.png');
+  await verifyEffort({ page, check, capture });
+  await verifyCompactWindow({ page, electronApp, check, capture });
 
   const composer = page.getByRole('textbox', { name: 'Message Aster' });
   await composer.fill('Please read the test fixture file. ASTER_HOST_TOOL_FIXTURE');
@@ -469,14 +490,24 @@ async function main() {
   const readResult = readCard.getByText(FIXTURE_MARKERS.readDone, { exact: false });
   await readResult.waitFor({ timeout: 10_000 });
   check('tool result shows the real file contents', (await readResult.count()) > 0);
+  check('read details put the file result before the raw arguments', await readCard.locator('.tool-detail .tool-section-head span').first().textContent() === 'Result'
+    && await readCard.locator('.tool-arguments').count() === 1);
   await capture('desktop-ui-completed-1280x840.png');
+  await verifyShellMenus({ page, check });
+  await verifyFonts({ page, check });
+  await verifyCodeHighlight({ page, check, capture });
 
   await page.getByRole('button', { name: 'Session menu', exact: true }).click();
-  await page.getByRole('button', { name: 'Rename session', exact: true }).click();
+  await page.getByRole('menuitem', { name: 'Rename session', exact: true }).click();
   await page.getByRole('textbox', { name: 'Session title' }).fill('UI integration');
   await page.getByRole('button', { name: 'Save', exact: true }).click();
   await page.locator('.pane-title').filter({ hasText: 'UI integration' }).waitFor();
   check('rename is confirmed by the host session summary', await page.locator('.session-open').filter({ hasText: 'UI integration' }).count() > 0);
+  await verifyRightCards({ page, electronApp, check, capture });
+  await verifyPreviewContext({ page, electronApp, check, capture, createSessionFromUi, waitReady });
+  await verifyWorkspaceLayout({ page, electronApp, check, capture });
+  await verifySidebar({ page, check });
+  await verifyLoading({ page, check, capture, createSessionFromUi, waitReady });
 
   await page.reload();
   await page.getByRole('navigation', { name: 'Code navigation' }).waitFor();
@@ -560,7 +591,7 @@ async function main() {
   await page.evaluate(() => {
     window.__asterStopRequestedObserved = false;
     const record = () => {
-      const pill = document.querySelector('.sidebar-footer > .sr-only');
+      const pill = document.querySelector('.sidebar-brand > .sr-only');
       const notice = document.querySelector('.runtime-notice');
       if (pill?.textContent?.trim() === 'Stop requested' || notice?.textContent?.includes('Stop requested. Waiting for Pi')) {
         window.__asterStopRequestedObserved = true;
@@ -591,6 +622,7 @@ async function main() {
     .flatMap(root => walk(root))
     .filter(path => /\.(sqlite3?|db)(-wal|-shm)?$/i.test(path));
   assert.deepEqual(sqlite, [], 'No SQLite store should appear under the host data, Pi agent or workspace roots.');
+  await verifyDraftRecovery({ page, check, capture, provider, waitReady });
   check('no SQLite is produced', sqlite.length === 0);
 
   assert.equal(await page.locator('vite-error-overlay').count(), 0);

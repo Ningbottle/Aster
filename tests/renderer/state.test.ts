@@ -9,6 +9,7 @@ import {
   type SessionState,
   type SessionStateRecord,
   type SessionSummary,
+  type WireModel,
   type Workspace,
 } from '@thinkrail/contracts';
 import {
@@ -17,6 +18,8 @@ import {
   applySessionState,
   clearDialog,
   createAsterState,
+  draftLevelFor,
+  installModelDefaults,
   installWelcome,
   isPendingDialogTarget,
   isPendingQuestionTarget,
@@ -37,6 +40,10 @@ import {
 } from '../../src/renderer/desktop-state';
 
 const project: Project = { id: 'p1', name: 'Aster', path: 'C:/Aster', slug: 'aster', lastOpened: 1 };
+
+function wire(id: string, thinkingLevels: string[]): WireModel {
+  return { provider: 'fixture', id, name: id, contextWindow: 128_000, reasoning: thinkingLevels.length > 0, thinkingLevels: thinkingLevels as WireModel['thinkingLevels'] };
+}
 const workspace: Workspace = {
   id: 'w1',
   projectId: 'p1',
@@ -599,5 +606,37 @@ describe('selection restore', () => {
     expect(state.projects).toEqual([]);
     expect(state.workspaces).toEqual([]);
     expect(state.sessions).toEqual([]);
+  });
+
+  test('the new-chat screen shows the model a new session would get', () => {
+    const state = installModelDefaults(createAsterState(), { model: wire('fixture-default', ['low', 'medium', 'high']), thinkingLevel: 'high' });
+    const view = selectDesktop(state);
+    expect(view.currentModel?.id).toBe('fixture-default');
+    expect(view.thinkingLevel).toBe('high');
+    expect(view.availableThinkingLevels).toEqual(['low', 'medium', 'high']);
+  });
+
+  test('a model chosen before any session wins over the host default', () => {
+    let state = installModelDefaults(createAsterState(), { model: wire('fixture-default', ['low']), thinkingLevel: 'low' });
+    state = { ...state, draftModel: wire('fixture-draft', ['low', 'max']), draftThinking: 'max' };
+    const view = selectDesktop(state);
+    expect(view.currentModel?.id).toBe('fixture-draft');
+    expect(view.thinkingLevel).toBe('max');
+    expect(view.availableThinkingLevels).toEqual(['low', 'max']);
+  });
+
+  test('a session with no model does not borrow the draft or the default', () => {
+    let state = installModelDefaults(prepared(), { model: wire('fixture-default', ['low']), thinkingLevel: 'low' });
+    state = { ...state, draftModel: wire('fixture-draft', ['max']), draftThinking: 'max' };
+    const view = selectDesktop(state);
+    expect(view.currentModel).toBeNull();
+    expect(view.thinkingLevel).toBe('medium');
+    expect(view.availableThinkingLevels).toEqual([]);
+  });
+
+  test('a draft level outside the chosen model falls back to a real one', () => {
+    expect(draftLevelFor(wire('fixture-default', ['low', 'medium', 'high']), 'max')).toBe('medium');
+    expect(draftLevelFor(wire('fixture-default', ['low', 'max']), 'max')).toBe('max');
+    expect(draftLevelFor(wire('fixture-default', []), 'max')).toBe('max');
   });
 });

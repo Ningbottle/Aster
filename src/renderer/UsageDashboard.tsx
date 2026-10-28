@@ -1,7 +1,7 @@
 import { useMemo, useRef, useState } from 'react';
 import type { UsageRange, UsageSummary } from '@thinkrail/contracts';
 import { formatTokens } from './usage';
-import { SkeletonSweep } from './cds/Status';
+import { Skeleton, SkeletonGroup } from './cds/Skeleton';
 import './usage-dashboard.css';
 
 type Props = {
@@ -53,8 +53,8 @@ export function UsageDashboard({ summary, range, onRangeChange, loading, error, 
         {error ? <div className="usage-state usage-error"><p>{error}</p><button onClick={onRefresh}>Retry</button></div>
           : loading && !summary ? <div className="usage-skeleton">
             <span className="sr-only">Loading usage…</span>
-            <div className="usage-metrics">{Array.from({ length: 6 }, (_, index) => <SkeletonSweep key={index} className="usage-skeleton-metric" />)}</div>
-            <SkeletonSweep className="usage-skeleton-heat" />
+            <SkeletonGroup motion="wave"><div className="usage-metrics">{Array.from({ length: 6 }, (_, index) => <Skeleton key={index} index={index} className="usage-skeleton-metric" />)}</div>
+              <Skeleton index={6} className="usage-skeleton-heat" /></SkeletonGroup>
           </div>
           : !summary ? <div className="usage-state">No usage data available.</div>
           : loading ? <div className="usage-inline-loading">Refreshing…</div>
