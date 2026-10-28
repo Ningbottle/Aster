@@ -20,6 +20,7 @@ export {
 	isSystemThemePair,
 	isTerminalWindowsShell,
 	isThemeMode,
+	isThinkingLevel,
 	JBCENTRAL_QUOTA_REFRESH_SECONDS,
 	LINE_WIDTH_COLUMNS,
 	MAX_HISTORY_LIMIT,
@@ -40,6 +41,7 @@ export {
 export type * from "./nativeClient";
 export type * from "./piProtocol";
 export type * from "./usage";
+export type * from "./uiPreferences";
 export {
 	assistantToolCallsAreExecutable,
 	canMarkCompletionUnread,

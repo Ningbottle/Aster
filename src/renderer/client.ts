@@ -29,6 +29,18 @@ export class ClientRequestError extends Error {
   }
 }
 
+export class ClientRequestTimeoutError extends ClientRequestError {
+  readonly method: WsMethodName;
+
+  constructor(method: WsMethodName) {
+    super(method === 'session.create'
+      ? 'Session creation timed out. The result is unknown; the local host may still finish creating it.'
+      : `"${method}" timed out`);
+    this.name = 'ClientRequestTimeoutError';
+    this.method = method;
+  }
+}
+
 /** Requests in flight when the socket drops are failed, never replayed: a replayed prompt or write could run twice. */
 export class ClientDisconnectedError extends Error {
   readonly method: string | null;
@@ -168,7 +180,7 @@ export class WsClient {
     return new Promise<WsResult<M>>((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(id);
-        reject(new ClientRequestError(`"${method}" timed out`));
+        reject(new ClientRequestTimeoutError(method));
       }, options.timeoutMs ?? this.timeoutMs);
       this.pending.set(id, {
         method,

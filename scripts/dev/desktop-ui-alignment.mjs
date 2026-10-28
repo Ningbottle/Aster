@@ -6,7 +6,9 @@ export function installWireObserver() {
   const messageProperty = Object.getOwnPropertyDescriptor(WebSocket.prototype, 'onmessage');
   if (!messageProperty?.set || !messageProperty.get) throw new Error('WebSocket message observation is unavailable.');
   const methods = new Map();
+  const observedReplyMethods = new Set(['session.create', 'session.getMessages', 'session.getCommands', 'session.getStats']);
   const wire = window.__asterTestWire = { requests: [], replies: [], holdMethod: null, held: [], interruptText: null, interruptedSocket: null,
+    hold(methods) { this.holdMethod = new Set(methods); },
     release() { const pending = this.held.splice(0); this.holdMethod = null; for (const deliver of pending) deliver(); } };
   if (sessionStorage.getItem('aster-test-hold-conversation') === '1') {
     sessionStorage.removeItem('aster-test-hold-conversation'); wire.holdMethod = 'session.getMessages';
@@ -19,8 +21,17 @@ export function installWireObserver() {
         let frame;
         try { frame = JSON.parse(event.data); } catch { handler.call(this, event); return; }
         const method = methods.get(frame.id);
-        if (method?.startsWith('session.set')) wire.replies.push({ method, frame });
-        if (method && method === wire.holdMethod && 'ok' in frame) wire.held.push(() => handler.call(this, event));
+        if (method && 'ok' in frame && method.startsWith('session.set')) wire.replies.push({ method, frame });
+        else if (method && observedReplyMethods.has(method) && 'ok' in frame) {
+          const result = method === 'session.create'
+            ? { sessionId: frame.result?.sessionId, model: frame.result?.model && { id: frame.result.model.id, name: frame.result.model.name, provider: frame.result.model.provider }, thinkingLevel: frame.result?.thinkingLevel }
+            : method === 'session.getMessages'
+              ? { summary: frame.result?.summary && { sessionId: frame.result.summary.sessionId } }
+              : undefined;
+          wire.replies.push({ method, frame: { id: frame.id, ok: frame.ok, ...(frame.error ? { error: frame.error } : {}), ...(result ? { result } : {}) } });
+        }
+        const hold = wire.holdMethod instanceof Set ? wire.holdMethod.has(method) : method === wire.holdMethod;
+        if (method && hold && 'ok' in frame) wire.held.push(() => handler.call(this, event));
         else handler.call(this, event);
       });
     },
@@ -87,6 +98,10 @@ export async function verifyEffort({ page, check, capture }) {
   check('Escape closes the picker', await menu().count() === 0);
   await page.reload();
   await page.getByRole('button', { name: /^Model:/ }).waitFor();
+  await page.waitForFunction(() => {
+    const input = document.querySelector('textarea[aria-label="Message Aster"]');
+    return input && !input.disabled && !document.querySelector('.conversation-loading');
+  });
   check('the effective level survives a renderer reload', ((await model.getAttribute('aria-label')) ?? '').includes('effort: ' + labels[highest]));
 }
 function assertBox(box) { if (!box) throw new Error('The effort slider has no visible geometry.'); }

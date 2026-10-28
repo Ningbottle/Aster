@@ -36,6 +36,14 @@
     {
       "files": ["packages/contracts/src/{domain,wsProtocol}.ts", "packages/server/src/host/handlers.ts", "packages/server/src/agent/agentSessionManager.ts"],
       "reason": "Add the live Pi model and effective thinking level to session.setModel and session.setThinkingLevel acknowledgements, with a shared runtime guard. Existing Ack clients can ignore the additive fields; this Aster extension is not a new upstream protocol version."
+    },
+    {
+      "files": ["packages/server/src/agent/{agentSessionManager,sessionPersistence,sessionPersistence.test}.ts"],
+      "reason": "Persist explicitly created empty sessions using Pi's own header and setup entries at its reserved JSONL path, with exclusive creation and public SessionManager reload. This preserves the native ID across restarts without synthetic messages, a second history store, or changes to the installed SDK."
+    },
+    {
+      "files": ["packages/contracts/src/{index,uiPreferences}.ts"],
+      "reason": "Share the narrow Electron UI preference DTO across main, preload and renderer, and export the existing thinking-level guard used when restoring native empty-session setup entries. Preference persistence remains in Electron userData and does not include conversation content or credentials."
     }
   ]
 }

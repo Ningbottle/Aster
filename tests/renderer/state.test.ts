@@ -24,6 +24,7 @@ import {
   isPendingDialogTarget,
   isPendingQuestionTarget,
   markStopRequested,
+  markLoading,
   mergeSessionStates,
   readSelection,
   releaseSession,
@@ -38,6 +39,7 @@ import {
   writeSelection,
   type AsterState,
 } from '../../src/renderer/desktop-state';
+import { loadedPreferences } from '../../src/renderer/ui-preferences';
 
 const project: Project = { id: 'p1', name: 'Aster', path: 'C:/Aster', slug: 'aster', lastOpened: 1 };
 
@@ -583,6 +585,19 @@ describe('extension dialogs', () => {
 });
 
 describe('selection restore', () => {
+  test('a broken origin storage mirror does not skip the authoritative profile update', () => {
+    const storage = { setItem: () => { throw new Error('origin storage unavailable'); } } as unknown as Storage;
+    const selection = { workspaceId: 'w-persist', sessionId: 's-persist' };
+    writeSelection(storage, selection);
+    expect(loadedPreferences().selection).toEqual(selection);
+  });
+
+  test('a restored selection shows loading before its summary is available', () => {
+    const state = markLoading(selectSession(createAsterState(), 'w1', 'missing-summary'), 'missing-summary');
+    expect(selectDesktop(state).activeSession).toBeNull();
+    expect(selectDesktop(state).loading).toBe(true);
+  });
+
   test('stores only workspace and session references', () => {
     const values = new Map<string, string>();
     const storage = {

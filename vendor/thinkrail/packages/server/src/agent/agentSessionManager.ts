@@ -50,6 +50,7 @@ import type {
 import {
 	assistantToolCallsAreExecutable,
 	canMarkCompletionUnread,
+	isThinkingLevel,
 	isTranscriptMessageRole,
 	normalizeSessionTitle,
 	sameModel,
@@ -125,6 +126,7 @@ import { catalogProviderAuth } from "./providerAuth";
 import { REQUEST_REVIEW_TOOL_NAME } from "./requestReviewTool";
 import { projectSessionEvent } from "./sessionEventProjection";
 import { repairDanglingToolCalls } from "./sessionRepair";
+import { materializeNewSession } from "./sessionPersistence";
 import { deriveSessionState } from "./sessionState";
 import type { SkillAdmissionContext } from "./skillAdmission";
 import {
@@ -1388,6 +1390,7 @@ async function createParentSessionInternal(
 			),
 		});
 		session = result.session;
+		if (announceCreation) await materializeNewSession(session.sessionManager);
 		return await registerSession(
 			session,
 			workspaceId,
@@ -1950,7 +1953,12 @@ async function openDiskSession(
 		skillAdmissionResolver(workspaceId).piResourceTrusted,
 	);
 	const sessionManager = SessionManager.open(info.path);
-	const persistedModel = persistedSessionModelRef(sessionManager.buildSessionContext().model);
+	const persistedContext = sessionManager.buildSessionContext();
+	const persistedModel = persistedSessionModelRef(persistedContext.model);
+	const savedThinking = sessionManager.getBranch().findLast((entry) => entry.type === "thinking_level_change");
+	if (savedThinking && !isThinkingLevel(savedThinking.thinkingLevel)) {
+		throw new Error("The chat's saved thinking level is unavailable.");
+	}
 	let exactModel: Model<string> | undefined;
 	if (persistedModel) {
 		try {
@@ -1964,6 +1972,8 @@ async function openDiskSession(
 			sessionManager,
 			settingsManager,
 			...(exactModel ? { model: exactModel } : {}),
+			// Pi only restores setup entries automatically once messages exist.
+			...(savedThinking ? { thinkingLevel: savedThinking.thinkingLevel as ThinkingLevel } : {}),
 		},
 		workspaceId,
 		generation,

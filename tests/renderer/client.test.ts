@@ -3,6 +3,7 @@ import { PROTOCOL_VERSION } from '@thinkrail/contracts';
 import {
   ClientDisconnectedError,
   ClientRequestError,
+  ClientRequestTimeoutError,
   WsClient,
   resolveWsUrl,
 } from '../../src/renderer/client';
@@ -77,6 +78,27 @@ describe('same-origin websocket endpoint', () => {
 });
 
 describe('request correlation', () => {
+  test('a create timeout reports an unknown outcome without cancellation or replay', async () => {
+    vi.useFakeTimers();
+    const client = new WsClient({ url: 'ws://aster.test/ws', reconnect: false, timeoutMs: 50 });
+    client.connect();
+    const socket = latest();
+    socket.open();
+    const pending = client.request('session.create', { workspaceId: 'w1' });
+    const rejected = expect(pending).rejects.toMatchObject({
+      name: 'ClientRequestTimeoutError', method: 'session.create', message: expect.stringContaining('result is unknown'),
+    });
+    await vi.advanceTimersByTimeAsync(50);
+    await rejected;
+    await expect(pending).rejects.toBeInstanceOf(ClientRequestTimeoutError);
+    expect(socket.frames()).toHaveLength(1);
+    const id = socket.frames()[0].id as string;
+    socket.receive({ id, ok: true, result: { sessionId: 'late-session' } });
+    await Promise.resolve();
+    expect(socket.frames().filter(frame => frame.method)).toHaveLength(1);
+    client.close();
+  });
+
   test('resolves out-of-order responses to their own request and acknowledges both', async () => {
     const client = new WsClient({ url: 'ws://aster.test/ws', reconnect: false });
     client.connect();

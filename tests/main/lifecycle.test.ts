@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 
-async function launcher(forceFails = false) {
+async function launcher(forceFails = false, preferenceWrites: Promise<void> = Promise.resolve()) {
   vi.resetModules();
   vi.useFakeTimers();
   const app = Object.assign(new EventEmitter(), {
@@ -28,6 +28,7 @@ async function launcher(forceFails = false) {
   vi.doMock('electron', () => ({ app, dialog: { showErrorBox } }));
   vi.doMock('node:child_process', () => ({ spawn: () => child, execFile }));
   vi.doMock('../../src/main/window', () => ({ createWindow }));
+  vi.doMock('../../src/main/preferences', () => ({ waitForPreferenceWrites: () => preferenceWrites }));
   await import('../../src/main/index');
   await vi.advanceTimersByTimeAsync(0);
   return { app, child, close, execFile, showErrorBox, createWindow };
@@ -39,6 +40,7 @@ afterEach(() => {
   vi.doUnmock('electron');
   vi.doUnmock('node:child_process');
   vi.doUnmock('../../src/main/window');
+  vi.doUnmock('../../src/main/preferences');
 });
 
 describe('desktop host lifetime', () => {
@@ -69,5 +71,20 @@ describe('desktop host lifetime', () => {
     expect(current.app.exited).toBe(true);
     expect(current.showErrorBox).toHaveBeenCalledWith('Aster shutdown failed', 'Tree stop failed.');
     current.close();
+  });
+
+  it('waits for preference writes received before quit before exiting', async () => {
+    let finish!: () => void;
+    const pending = new Promise<void>(resolve => { finish = resolve; });
+    const current = await launcher(false, pending);
+    current.child.stdout.write('ASTER_HOST_READY {"port":12345}\n');
+    await vi.advanceTimersByTimeAsync(0);
+    current.app.quit();
+    current.close();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(current.app.exited).toBe(false);
+    finish();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(current.app.exited).toBe(true);
   });
 });

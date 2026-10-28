@@ -15,6 +15,7 @@ import type { WsClient } from './client';
 import { HomeUsage } from './HomeUsage';
 import { useModalFocus } from './modal-focus';
 import { Skeleton, SkeletonGroup } from './cds/Skeleton';
+import { StatusDot } from './cds/Status';
 import { distanceFromBottom, isPinned, shouldFollow, showsJump } from './scroll-follow';
 import { turnMetaIndexes } from './conversation-turns';
 
@@ -32,10 +33,13 @@ export function CodeWorkspace({ view, client, terminalOpen, onCloseTerminal, onR
 }) {
   const hasMessages = !!view.activeSession?.messages.length;
   const awaitingInput = !!view.pendingInput || !!view.pendingQuestion;
+  const preparation = view.sessionAction === 'choosing-project' ? 'Waiting for a project folder…'
+    : view.sessionAction === 'creating-session' ? 'Preparing session…'
+      : view.booting ? 'Restoring workspace…' : null;
   return <main className={`workspace ${hasMessages ? 'has-transcript' : 'is-empty'}`}>
     <div className={`workspace-body ${hasMessages ? 'has-transcript' : 'is-empty'}`}>
-      <div className="error-slot">{error && <div className="error-banner" role="alert"><WarningCircle size={15} /><span>{error}</span><Button variant="ghost" size="icon" className="icon-button" onClick={onDismissError} aria-label="Dismiss error"><X size={14} /></Button></div>}</div>
-      {view.loading ? <div className="conversation-loading" role="status" aria-busy="true"><span className="sr-only">Loading conversation…</span>
+      <div className="error-slot">{preparation && !view.loading && <div className="runtime-notice" role="status"><StatusDot kind="running" label={preparation} /></div>}{error && <div className="error-banner" role="alert"><WarningCircle size={15} /><span>{error}</span><Button variant="ghost" size="icon" className="icon-button" onClick={onDismissError} aria-label="Dismiss error"><X size={14} /></Button></div>}</div>
+      {view.loading ? <div className="conversation-loading" role="status" aria-busy="true"><div className="runtime-notice"><StatusDot kind="running" label="Loading conversation…" /></div>
         <SkeletonGroup motion="lockstep"><Skeleton style={{ width: '54%', height: 28, marginLeft: 'auto' }} />
           <Skeleton style={{ width: '92%', marginTop: 28 }} /><Skeleton style={{ width: '84%', marginTop: 10 }} /><Skeleton style={{ width: '67%', marginTop: 10 }} /></SkeletonGroup>
       </div> : hasMessages

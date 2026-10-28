@@ -1,18 +1,8 @@
 import { contextBridge, ipcRenderer } from 'electron';
+import type { PreferencesReadResult, PreferencesWriteResult, UiPreferences } from '@thinkrail/contracts';
 
 export interface NativeResult {
   ok: boolean;
-  error?: string;
-}
-
-export interface UiPreferences {
-  sidebarWidth?: number;
-  selection?: { workspaceId: string; sessionId: string } | null;
-}
-
-export interface PreferencesReadResult {
-  ok: boolean;
-  prefs?: UiPreferences;
   error?: string;
 }
 
@@ -25,8 +15,8 @@ const bridge = {
     ipcRenderer.invoke('aster:native-open-external', { url }) as Promise<NativeResult>,
   readPreferences: (): Promise<PreferencesReadResult> =>
     ipcRenderer.invoke('aster:prefs-read') as Promise<PreferencesReadResult>,
-  writePreferences: (patch: UiPreferences): Promise<NativeResult> =>
-    ipcRenderer.invoke('aster:prefs-write', patch) as Promise<NativeResult>,
+  writePreferences: (patch: UiPreferences): Promise<PreferencesWriteResult> =>
+    ipcRenderer.invoke('aster:prefs-write', patch) as Promise<PreferencesWriteResult>,
 };
 
 contextBridge.exposeInMainWorld('asterNative', bridge);

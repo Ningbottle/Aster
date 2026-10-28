@@ -33,7 +33,8 @@ import {
   type UiMessage,
   type UiToolActivity,
 } from './model';
-import { persistPreference } from './ui-preferences';
+import { loadedPreferences, onPreferenceError, persistPreference } from './ui-preferences';
+import { loadSessionContent } from './session-loading';
 
 export interface SessionTranscript {
   messages: UiMessage[];
@@ -72,6 +73,7 @@ export interface AsterState {
   selected: Selection | null;
   stopRequested: Record<string, true>;
   loading: Record<string, true>;
+  sessionAction: 'choosing-project' | 'creating-session' | null;
   error: string | null;
 }
 
@@ -107,6 +109,7 @@ export interface DesktopView {
   pendingInput: PendingInput | null;
   pendingQuestion: { toolCallId: string; args: AskUserQuestionArgs; invalid: boolean } | null;
   loading: boolean;
+  sessionAction: AsterState['sessionAction'];
   error: string | null;
 }
 
@@ -133,6 +136,7 @@ export function createAsterState(): AsterState {
     selected: null,
     stopRequested: {},
     loading: {},
+    sessionAction: null,
     error: null,
   };
 }
@@ -661,7 +665,8 @@ export function selectDesktop(state: AsterState): DesktopView {
     commands: session ? state.commands[session.sessionId] ?? [] : [],
     pendingInput: pendingDialog(state),
     pendingQuestion,
-    loading: session ? state.loading[session.sessionId] === true : false,
+    loading: state.selected ? state.loading[state.selected.sessionId] === true : false,
+    sessionAction: state.sessionAction,
     error: state.error,
   };
 }
@@ -684,7 +689,7 @@ export function writeSelection(storage: Storage | null, selection: Selection): v
   try {
     storage?.setItem(SELECTION_KEY, JSON.stringify(selection));
   } catch {
-    return;
+    // The profile is authoritative; a failed per-origin mirror must not skip it.
   }
   // Reopening the app on the last session needs the profile: localStorage is per-origin.
   persistPreference({ selection });
@@ -759,22 +764,18 @@ export function useDesktopState(client: WsClient, storage?: Storage | null): {
       commit(current => markLoading(selectSession(current, selection.workspaceId, selection.sessionId), selection.sessionId));
       writeSelection(selectionStore, selection);
       try {
-        const result = await client.request('session.getMessages', {
-          sessionId: selection.sessionId,
-          workspaceId: selection.workspaceId,
+        await loadSessionContent(client, selection, {
+          transcript(result) {
+            const messages = result.messages.map(toUiMessage).filter((message): message is UiMessage => message !== null);
+            commit(current => upsertSession(setTranscript(current, selection.sessionId, messages), result.summary));
+          },
+          commands: commands => commit(current => current.transcripts[selection.sessionId]
+            ? setCommands(current, selection.sessionId, commands) : current),
+          stats: stats => commit(current => current.transcripts[selection.sessionId]
+            ? setSessionStats(current, selection.sessionId, stats) : current),
+          failed: (section, error) => commit(current => current.transcripts[selection.sessionId]
+            ? { ...current, error: `Session ${section} could not be loaded: ${messageOf(error)}` } : current),
         });
-        const messages = result.messages
-          .map(toUiMessage)
-          .filter((message): message is UiMessage => message !== null);
-        commit(current => upsertSession(setTranscript(current, selection.sessionId, messages), result.summary));
-        const commands = await client.request('session.getCommands', { sessionId: selection.sessionId });
-        commit(current => setCommands(current, selection.sessionId, commands));
-        try {
-          const stats = await client.request('session.getStats', { sessionId: selection.sessionId });
-          commit(current => setSessionStats(current, selection.sessionId, stats));
-        } catch (error) {
-          commit(current => ({ ...current, error: messageOf(error) }));
-        }
       } finally {
         commit(current => clearLoading(current, selection.sessionId));
       }
@@ -797,6 +798,8 @@ export function useDesktopState(client: WsClient, storage?: Storage | null): {
         ? current.workspaces.find(workspace => workspace.id === current.selected?.workspaceId && workspace.projectId === projectId)
         : undefined;
       if (preferred) return preferred.id;
+      const known = current.workspaces.find(workspace => workspace.projectId === projectId && workspace.kind === 'default');
+      if (known) return known.id;
       const workspaces = await client.request('workspace.list', { projectId, includeDiffStats: false });
       commit(value => setWorkspaces(value, projectId, workspaces));
       const workspace = workspaces.find(item => item.kind === 'default');
@@ -808,41 +811,47 @@ export function useDesktopState(client: WsClient, storage?: Storage | null): {
 
   const createSession = useCallback(
     async (projectId: string): Promise<boolean> => {
-      const workspaceId = await ensureWorkspace(projectId);
-      // A model chosen on the new-chat screen belongs to the session this creates.
-      const draft = latest.current;
-      const created = await client.request('session.create', {
-        workspaceId,
-        ...(draft.draftModel ? { model: draft.draftModel } : {}),
-        ...(draft.draftThinking ? { thinkingLevel: draft.draftThinking } : {}),
-      });
-      await refreshSessions(workspaceId);
-      await loadSession({ workspaceId, sessionId: created.sessionId });
-      return true;
+      commit(current => ({ ...current, sessionAction: 'creating-session', error: null }));
+      try {
+        const workspaceId = await ensureWorkspace(projectId);
+        // A model chosen on the new-chat screen belongs to the session this creates.
+        const draft = latest.current;
+        const created = await client.request('session.create', {
+          workspaceId,
+          ...(draft.draftModel ? { model: draft.draftModel } : {}),
+          ...(draft.draftThinking ? { thinkingLevel: draft.draftThinking } : {}),
+        });
+        // getMessages returns the authoritative summary; re-listing every chat is unnecessary.
+        await loadSession({ workspaceId, sessionId: created.sessionId });
+        return true;
+      } finally {
+        commit(current => ({ ...current, sessionAction: null }));
+      }
     },
-    [client, ensureWorkspace, loadSession, refreshSessions],
-  );
-
-  const loadProject = useCallback(
-    async (projectId: string): Promise<void> => {
-      const workspaces = await client.request('workspace.list', { projectId, includeDiffStats: false });
-      commit(current => setWorkspaces(current, projectId, workspaces));
-      for (const workspace of workspaces) await refreshSessions(workspace.id);
-    },
-    [client, commit, refreshSessions],
+    [client, commit, ensureWorkspace, loadSession],
   );
 
   const chooseProject = useCallback(async (): Promise<boolean> => {
     const created = await run(async () => {
-      const picked = await client.request('dialog.selectDirectory', {});
-      if (!picked.path) return false;
-      const project = await client.request('project.open', { path: picked.path });
-      commit(current => upsertProject(current, project));
-      await loadProject(project.id);
-      return createSession(project.id);
+      commit(current => ({ ...current, sessionAction: 'choosing-project', error: null }));
+      try {
+        const picked = await client.request('dialog.selectDirectory', {});
+        if (!picked.path) return false;
+        const project = await client.request('project.open', { path: picked.path });
+        commit(current => upsertProject(current, project));
+        const result = await createSession(project.id);
+        for (const workspace of latest.current.workspaces.filter(item => item.projectId === project.id)) {
+          void refreshSessions(workspace.id).catch(error => {
+            commit(current => ({ ...current, error: `Session list could not be loaded: ${messageOf(error)}` }));
+          });
+        }
+        return result;
+      } finally {
+        commit(current => ({ ...current, sessionAction: null }));
+      }
     });
     return created === true;
-  }, [client, commit, createSession, loadProject, run]);
+  }, [client, commit, createSession, refreshSessions, run]);
 
   const newSession = useCallback(
     async (projectId?: string): Promise<boolean> => {
@@ -1066,6 +1075,16 @@ export function useDesktopState(client: WsClient, storage?: Storage | null): {
     commit(value => ({ ...value, error: clean }));
   }, [commit]);
 
+  useEffect(() => {
+    let previous: string | undefined;
+    return onPreferenceError(message => {
+      const cleared = previous;
+      previous = message;
+      commit(state => message ? { ...state, error: message }
+        : cleared && state.error === cleared ? { ...state, error: null } : state);
+    });
+  }, [commit]);
+
   const dismissError = useCallback((): void => {
     commit(value => (value.error === null ? value : { ...value, error: null }));
   }, [commit]);
@@ -1087,28 +1106,12 @@ export function useDesktopState(client: WsClient, storage?: Storage | null): {
       commit(state => installWelcome(state, welcome));
       void (async () => {
         try {
-          for (const project of welcome.projects) {
-            const workspaces = await client.request('workspace.list', { projectId: project.id, includeDiffStats: false });
-            if (!alive || current !== generation) return;
-            commit(state => setWorkspaces(state, project.id, workspaces));
-            for (const workspace of workspaces) {
-              const sessions = await client.request('session.list', { workspaceId: workspace.id });
-              if (!alive || current !== generation) return;
-              commit(state => setSessions(state, workspace.id, sessions));
-            }
-          }
-          if (!alive || current !== generation) return;
-          hydrating = true;
-          const [records, models] = await Promise.all([
-            client.request('session.stateList', {}),
-            client.request('model.list', {}),
-          ]);
-          if (!alive || current !== generation) return;
-          hydrating = false;
-          const pending = buffered;
-          buffered = [];
-          commit(state => installModels(mergeSessionStates(state, records), models));
-          if (pending.length) commit(state => pending.reduce(applySessionState, state));
+          // Model discovery and other projects must not gate the saved conversation.
+          void client.request('model.list', {}).then(models => {
+            if (alive && current === generation) commit(state => installModels(state, models));
+          }).catch(error => {
+            if (alive && current === generation) commit(state => ({ ...state, error: messageOf(error) }));
+          });
           // What a brand new chat would use, so the new-chat screen never says "No model".
           void client.request('model.default', {}).then(value => {
             if (!alive || current !== generation) return;
@@ -1120,13 +1123,55 @@ export function useDesktopState(client: WsClient, storage?: Storage | null): {
           }, () => {
             // The host may not expose a new-chat default; the picker then falls back to no selection.
           });
-          const saved = readSelection(selectionStore);
-          if (saved) {
-            const known = latest.current.sessions.find(
-              session => session.sessionId === saved.sessionId && session.workspaceId === saved.workspaceId,
-            );
-            if (known) await loadSession(saved);
+          const saved = readSelection(selectionStore) ?? loadedPreferences().selection;
+          let restoration: Promise<void> | undefined;
+          const workspaceGroups = await Promise.all(welcome.projects.map(async project => {
+            try {
+              const workspaces = await client.request('workspace.list', { projectId: project.id, includeDiffStats: false });
+              if (!alive || current !== generation) return [];
+              commit(state => setWorkspaces(state, project.id, workspaces));
+              if (saved && workspaces.some(workspace => workspace.id === saved.workspaceId)
+                && !latest.current.selected && !latest.current.sessionAction) {
+                restoration = loadSession(saved).catch(error => {
+                  if (alive && current === generation) commit(state => ({ ...state, error: `The last session could not be restored: ${messageOf(error)}` }));
+                }).finally(() => {
+                  if (alive && current === generation) commit(state => setBooting(state, false));
+                });
+              }
+              return workspaces;
+            } catch (error) {
+              if (alive && current === generation) commit(state => ({ ...state, error: messageOf(error) }));
+              return [];
+            }
+          }));
+          if (!alive || current !== generation) return;
+          const workspaces = workspaceGroups.flat();
+          if (restoration) await restoration;
+          else if (saved && !latest.current.selected && !latest.current.sessionAction
+            && !workspaces.some(workspace => workspace.id === saved.workspaceId)) {
+            commit(state => ({ ...state, error: 'The last session’s project is unavailable. Open a project or choose another session.' }));
           }
+          if (!alive || current !== generation) return;
+          commit(state => setBooting(state, false));
+          // Sidebar summaries and global state are projections; failure here must not
+          // discard or prevent the saved conversation that has already been loaded.
+          await Promise.all(workspaces.map(async workspace => {
+            try {
+              const sessions = await client.request('session.list', { workspaceId: workspace.id });
+              if (alive && current === generation) commit(state => setSessions(state, workspace.id, sessions));
+            } catch (error) {
+              if (alive && current === generation) commit(state => ({ ...state, error: messageOf(error) }));
+            }
+          }));
+          if (!alive || current !== generation) return;
+          hydrating = true;
+          const records = await client.request('session.stateList', {});
+          if (!alive || current !== generation) return;
+          hydrating = false;
+          const pending = buffered;
+          buffered = [];
+          commit(state => mergeSessionStates(state, records));
+          if (pending.length) commit(state => pending.reduce(applySessionState, state));
         } catch (error) {
           commit(state => ({ ...state, error: messageOf(error) }));
         } finally {

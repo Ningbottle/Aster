@@ -114,7 +114,7 @@ export function PromptComposer({ onChooseProject, view, client, onSend, onAbort,
   const [savedDrafts, setSavedDrafts] = useState<Map<string, Draft[]>>(() => new Map());
   const recoverable = savedDrafts.get(identity) ?? [];
   const connected = view.connection === 'connected';
-  const canEdit = !!view.activeSession && connected && !view.loading;
+  const canEdit = !!view.activeSession && connected && !view.loading && !view.sessionAction;
   /** Before a session exists the text can't be sent, but the model choice is real: `session.create` applies it. */
   const canConfigureModel = connected && !view.loading;
   const hasDraft = !!draft.trim() || attachments.length > 0;

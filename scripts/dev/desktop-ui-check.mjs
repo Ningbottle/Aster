@@ -529,9 +529,9 @@ async function main() {
 
   await verifyAttachmentOwnership();
 
+  const answeredQuestionFiles = new Set(sessionFiles());
   await createSessionFromUi();
   const answeredQuestionMark = provider.requests.length;
-  const answeredQuestionFiles = new Set(sessionFiles());
   await composer.fill('ASTER_HOST_QUESTION_FIXTURE multi select');
   await page.getByRole('button', { name: 'Send message' }).click();
   const answerDialog = page.getByRole('dialog').filter({ has: page.getByRole('heading', { name: 'Pi needs your input' }) });
@@ -561,9 +561,9 @@ async function main() {
     && /"answer":\s*"自填答案"/.test(answeredQuestionNative)
     && /"toolName":\s*"ask_user_question"/.test(answeredQuestionNative));
 
+  const cancelledQuestionFiles = new Set(sessionFiles());
   await createSessionFromUi();
   const cancelledQuestionMark = provider.requests.length;
-  const cancelledQuestionFiles = new Set(sessionFiles());
   await composer.fill('ASTER_HOST_QUESTION_FIXTURE cancel run');
   await page.getByRole('button', { name: 'Send message' }).click();
   const cancelDialog = page.getByRole('dialog').filter({ has: page.getByRole('heading', { name: 'Pi needs your input' }) });

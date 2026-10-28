@@ -4,7 +4,7 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { createRequire } from 'node:module';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fixtureModelsJson, FIXTURE_MARKERS, startFixtureProvider } from '../../tests/fixtures/fixture-provider.mjs';
@@ -97,6 +97,35 @@ async function waitForProfile(path, predicate, timeout = 15_000) {
   return null;
 }
 
+async function waitForStableFileBytes(path, timeout = 10_000) {
+  const started = Date.now();
+  let previous;
+  let sameReads = 0;
+  while (Date.now() - started < timeout) {
+    const current = readFileSync(path);
+    if (previous?.equals(current)) sameReads += 1;
+    else { previous = current; sameReads = 0; }
+    if (sameReads >= 3) return current;
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 100));
+  }
+  throw new Error(`Preference file did not settle: ${path}`);
+}
+
+function findNativeSessionFile(sessionId) {
+  const sessionsRoot = join(piDir, 'sessions');
+  if (!existsSync(sessionsRoot)) return null;
+  const pending = [sessionsRoot];
+  while (pending.length) {
+    const directory = pending.pop();
+    for (const entry of readdirSync(directory, { withFileTypes: true })) {
+      const path = join(directory, entry.name);
+      if (entry.isDirectory()) pending.push(path);
+      else if (entry.isFile() && entry.name.endsWith(`_${sessionId}.jsonl`)) return path;
+    }
+  }
+  return null;
+}
+
 let provider;
 let electronApp;
 let page;
@@ -127,6 +156,7 @@ try {
   const pageErrors = [];
   page.on('pageerror', error => pageErrors.push(error.message.slice(0, 240)));
   await page.waitForLoadState('domcontentloaded');
+  await page.locator('.desktop-shell').waitFor({ timeout: 60_000 });
   await page.addInitScript(installWireObserver);
   await page.reload();
   await electronApp.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setContentSize(1280, 840));
@@ -148,9 +178,11 @@ try {
   const initialWidth = await sidebarWidth();
   await resizer.focus();
   await resizer.press('ArrowRight');
+  await page.waitForFunction(() => getComputedStyle(document.querySelector('.desktop-shell')).getPropertyValue('--sidebar-width').trim() === '296px');
   const widened = await sidebarWidth();
   check('the navigation resizes from the keyboard and persists to the layout', /^288px$/.test(initialWidth) && /^296px$/.test(widened), `${initialWidth} -> ${widened}`);
   await resizer.press('Enter');
+  await page.waitForFunction(() => getComputedStyle(document.querySelector('.desktop-shell')).getPropertyValue('--sidebar-width').trim() === '288px');
   check('Enter restores the default navigation width', /^288px$/.test(await sidebarWidth()));
 
   // Settings is a real dialog over real state, and Escape closes it.
@@ -190,6 +222,16 @@ try {
   await page.getByRole('button', { name: 'Send message' }).click();
   await page.getByText(FIXTURE_MARKERS.answer, { exact: true }).waitFor({ timeout: 60_000 });
   await page.locator('.sidebar-brand > .sr-only').filter({ hasText: 'Ready' }).waitFor({ timeout: 60_000 });
+
+  // Delayed metadata must not replace an already loaded conversation or lock input.
+  await page.evaluate(() => window.__asterTestWire.hold(['session.getCommands', 'session.getStats']));
+  await page.locator('.session-row.selected .session-open').click();
+  await page.waitForFunction(() => window.__asterTestWire.held.length >= 2, undefined, { timeout: 60_000 });
+  check('real commands and stats replies are held in the transport', await page.evaluate(() => window.__asterTestWire.held.length >= 2));
+  check('delayed commands or stats do not skeleton over loaded messages', await page.getByText(FIXTURE_MARKERS.answer, { exact: true }).isVisible()
+    && await page.locator('.conversation-loading').count() === 0);
+  check('delayed commands or stats leave the composer editable', await page.getByRole('textbox', { name: 'Message Aster' }).isEnabled());
+  await page.evaluate(() => window.__asterTestWire.release());
 
   const metas = page.locator('.message.assistant .message-meta');
   const metaCount = await metas.count();
@@ -409,6 +451,7 @@ try {
   await resizerForRestart.focus();
   await page.keyboard.press('ArrowRight');
   await page.keyboard.press('ArrowRight');
+  await page.waitForFunction(() => getComputedStyle(document.querySelector('.desktop-shell')).getPropertyValue('--sidebar-width').trim() === '304px');
   const widenedAgain = await page.evaluate(() => getComputedStyle(document.querySelector('.desktop-shell')).getPropertyValue('--sidebar-width').trim());
   check('the navigation width commits before the restart', /^304px$/.test(widenedAgain), widenedAgain);
   // The preview split remembers its share even though the tab itself is not restored.
@@ -443,6 +486,9 @@ try {
   const relaunchErrors = [];
   page.on('pageerror', error => relaunchErrors.push(error.message.slice(0, 240)));
   await page.waitForLoadState('domcontentloaded');
+  await page.locator('.desktop-shell').waitFor({ timeout: 60_000 });
+  await page.addInitScript(installWireObserver);
+  await page.reload();
   await electronApp.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setContentSize(1280, 840));
   await page.locator('.desktop-shell').waitFor({ timeout: 60_000 });
   check('the collapsed navigation survives the restart', await page.locator('.desktop-shell.sidebar-collapsed').count() === 1);
@@ -469,11 +515,158 @@ try {
   await relaunchedTrigger.waitFor({ timeout: 60_000 });
   await page.waitForFunction(() => /Fixture model two/.test(document.querySelector('.model-switcher-trigger')?.textContent ?? ''), undefined, { timeout: 20_000 }).catch(() => undefined);
   check('the model chosen before the restart is still the new-chat model', /Fixture model two/.test(await relaunchedTrigger.innerText()));
+
+  // Choose effort explicitly in this run. A restored session's old effort does
+  // not overwrite the separate global new-chat default.
+  const priorSelection = await waitForProfile(profilePath, prefs => typeof prefs.selection?.sessionId === 'string');
+  check('the existing conversation selection is persisted before New+', typeof priorSelection?.selection?.sessionId === 'string');
+  const newChatModelMenu = page.getByRole('menu', { name: 'Model', exact: true });
+  await relaunchedTrigger.click();
+  await newChatModelMenu.waitFor();
+  const selectedModelName = await newChatModelMenu.locator('.model-switcher-current .model-switcher-name').innerText();
+  const newChatEffort = newChatModelMenu.locator('[role="slider"][aria-label="Thinking effort"]');
+  await newChatEffort.press('End');
+  await page.waitForFunction(() => window.__asterTestWire.replies.some(reply => reply.method === 'session.setThinkingLevel'
+    && reply.frame.ok && reply.frame.result?.thinkingLevel === 'high'));
+  const selectedThinking = await newChatEffort.getAttribute('aria-valuetext');
+  await page.keyboard.press('Escape');
+  const beforeNew = await page.evaluate(() => window.__asterTestWire.requests.length);
   await page.getByRole('button', { name: 'New session', exact: true }).click();
-  await page.waitForFunction(() => /Fixture model two/.test(document.querySelector('.model-switcher-trigger')?.textContent ?? ''), undefined, { timeout: 20_000 }).catch(() => undefined);
-  check('a session created after the restart keeps that model', /Fixture model two/.test(await relaunchedTrigger.innerText()));
+  await page.waitForFunction(from => window.__asterTestWire.replies.some(reply => reply.method === 'session.create'
+    && reply.frame.ok === true && window.__asterTestWire.requests.some((request, index) => request.method === 'session.create'
+      && request.id === reply.frame.id && index >= from)), beforeNew, { timeout: 60_000 });
+  const newCreate = await page.evaluate(from => {
+    const request = window.__asterTestWire.requests.slice(from).find(item => item.method === 'session.create');
+    const reply = window.__asterTestWire.replies.find(item => item.method === 'session.create' && item.frame.id === request?.id);
+    return { request, reply: reply?.frame };
+  }, beforeNew);
+  const newSessionId = newCreate.reply?.result?.sessionId;
+  check('New+ succeeds with a session ID different from the previously selected session', newCreate.reply?.ok === true
+    && typeof newSessionId === 'string' && newSessionId !== priorSelection.selection.sessionId,
+  JSON.stringify({ newSessionId, oldSessionId: priorSelection?.selection?.sessionId }));
+  check('the created session uses the actual new-chat model and thinking choice', newCreate.reply?.result?.model?.name === selectedModelName
+    && newCreate.reply?.result?.thinkingLevel === ({ Off: 'off', Minimal: 'minimal', Low: 'low', Medium: 'medium', High: 'high', Extra: 'xhigh', Max: 'max' })[selectedThinking]
+    && (!newCreate.request?.params?.model || newCreate.request.params.model.id === newCreate.reply.result.model.id)
+    && (!newCreate.request?.params?.thinkingLevel || newCreate.request.params.thinkingLevel === newCreate.reply.result.thinkingLevel),
+  JSON.stringify({ selectedModelName, selectedThinking, params: newCreate.request?.params, result: newCreate.reply?.result }));
+  const emptySelection = await waitForProfile(profilePath, prefs => prefs.selection?.sessionId === newSessionId);
+  check('the newly created session is the persisted selection', emptySelection?.selection?.sessionId === newSessionId, JSON.stringify(emptySelection?.selection));
+  await page.waitForFunction(id => window.__asterTestWire.replies.some(reply => reply.method === 'session.getMessages'
+    && reply.frame.ok === true && window.__asterTestWire.requests.some(request => request.method === 'session.getMessages'
+      && request.id === reply.frame.id && request.params?.sessionId === id)), newSessionId, { timeout: 30_000 });
+  check('the selected empty session has an editable composer', await page.getByRole('textbox', { name: 'Message Aster' }).isEnabled()
+    && await page.locator('.conversation-scroll .message').count() === 0);
+  const emptyNativeFile = findNativeSessionFile(newSessionId);
+  check('the empty session is saved as native Pi JSONL', emptyNativeFile !== null
+    && existsSync(emptyNativeFile) && readFileSync(emptyNativeFile, 'utf8').includes(newSessionId), emptyNativeFile ?? 'no matching JSONL under isolated Pi data root');
   await capture('round3-relaunch-1280x840.png');
   check('no page error was raised after the restart', relaunchErrors.length === 0, relaunchErrors.join(' | '));
+
+  await electronApp.close();
+  electronApp = await _electron.launch({
+    executablePath: electronPath,
+    args: [`--user-data-dir=${join(testRoot, 'electron-user-data')}`, mainEntry],
+    cwd: repo, env, timeout: 90_000,
+  });
+  page = await electronApp.firstWindow({ timeout: 90_000 });
+  page.setDefaultTimeout(30_000);
+  await page.waitForLoadState('domcontentloaded');
+  await page.locator('.desktop-shell').waitFor({ timeout: 60_000 });
+  await page.addInitScript(installWireObserver);
+  await page.reload();
+  await page.locator('.sidebar-brand > .sr-only').filter({ hasText: 'Ready' }).waitFor({ timeout: 60_000 });
+  await page.waitForFunction(id => window.__asterTestWire.replies.some(reply => reply.method === 'session.getMessages'
+    && reply.frame.ok === true && window.__asterTestWire.requests.some(request => request.method === 'session.getMessages'
+      && request.id === reply.frame.id && request.params?.sessionId === id)), newSessionId, { timeout: 60_000 });
+  const restoredEmpty = await waitForProfile(profilePath, prefs => prefs.selection?.sessionId === newSessionId);
+  check('restarting restores the same empty session ID', restoredEmpty?.selection?.sessionId === newSessionId);
+  check('restarting keeps the selected session empty and the composer editable', await page.locator('.conversation-scroll .message').count() === 0
+    && await page.getByRole('textbox', { name: 'Message Aster' }).isEnabled());
+  const restoredModel = page.locator('.model-switcher-trigger');
+  const restoredModelText = await restoredModel.innerText();
+  check('restarting keeps the empty session model', selectedModelName === newCreate.reply.result.model.name
+    && selectedModelName.split(/\s+/).every(part => restoredModelText.includes(part)));
+  await restoredModel.click();
+  const restoredMenu = page.getByRole('menu', { name: 'Model', exact: true });
+  await restoredMenu.waitFor();
+  const restoredEffort = await restoredMenu.locator('[role="slider"][aria-label="Thinking effort"]').getAttribute('aria-valuetext');
+  check('restarting keeps the empty session thinking level', restoredEffort === selectedThinking
+    && newCreate.reply.result.thinkingLevel === ({ Off: 'off', Minimal: 'minimal', Low: 'low', Medium: 'medium', High: 'high', Extra: 'xhigh', Max: 'max' })[restoredEffort],
+  `${restoredEffort} != ${selectedThinking}`);
+  await page.keyboard.press('Escape');
+  check('restarting keeps the default access mode', await page.locator('.permission-control').innerText() === 'Auto accept edits');
+  check('the empty session JSONL remains present after restart', findNativeSessionFile(newSessionId) === emptyNativeFile
+    && existsSync(emptyNativeFile));
+
+  // Exercise the real renderer -> preload -> main validation path against only
+  // this run's isolated Electron profile. A valid write is the queue barrier.
+  const profileBackup = readFileSync(profilePath);
+  const profileBeforeBarrier = JSON.parse(profileBackup.toString('utf8'));
+  const barrierResult = await page.evaluate(width => window.asterNative.writePreferences({ sidebarWidth: width }), profileBeforeBarrier.sidebarWidth);
+  check('a valid preference write drains earlier profile writes', barrierResult.ok === true, JSON.stringify(barrierResult));
+  await waitForStableFileBytes(profilePath);
+  const beforeInvalidWrite = readFileSync(profilePath);
+  const invalidWrite = await page.evaluate(() => window.asterNative.writePreferences({ sidebarWidth: 120 }));
+  check('invalid preferences return a structured IPC failure', invalidWrite.ok === false
+    && typeof invalidWrite.error === 'string', JSON.stringify(invalidWrite));
+  const afterInvalidWrite = await waitForStableFileBytes(profilePath);
+  check('invalid preferences leave the isolated profile bytes unchanged', afterInvalidWrite.equals(beforeInvalidWrite));
+
+  // Corrupt only the isolated fixture profile while the application is closed.
+  await electronApp.close();
+  electronApp = null;
+  const malformedProfile = Buffer.from('{ invalid isolated preferences fixture }\n', 'utf8');
+  writeFileSync(profilePath, malformedProfile);
+  electronApp = await _electron.launch({
+    executablePath: electronPath,
+    args: [`--user-data-dir=${join(testRoot, 'electron-user-data')}`, mainEntry],
+    cwd: repo, env, timeout: 90_000,
+  });
+  page = await electronApp.firstWindow({ timeout: 90_000 });
+  page.setDefaultTimeout(30_000);
+  await page.waitForLoadState('domcontentloaded');
+  await page.locator('.desktop-shell').waitFor({ timeout: 60_000 });
+  const readError = 'Saved interface preferences could not be read.';
+  await page.getByRole('alert').filter({ hasText: readError }).waitFor({ timeout: 30_000 });
+  check('malformed preferences show the generic read error while the shell remains usable',
+    await page.locator('.desktop-shell').isVisible()
+    && await page.locator('.mode-switch').getByRole('radio', { name: 'Chat', exact: true }).isEnabled()
+    && await page.locator('.mode-switch').getByRole('radio', { name: 'Code', exact: true }).isEnabled());
+  await capture('round3-preferences-read-error.png');
+
+  const writeError = 'Interface preferences could not be saved. Check that the preferences file is readable and writable.';
+  await page.locator('.mode-switch').getByRole('radio', { name: 'Chat', exact: true }).click();
+  await page.getByRole('alert').filter({ hasText: writeError }).waitFor({ timeout: 30_000 });
+  check('switching to Chat reports the generic preference write error', await page.locator('.mode-switch [aria-checked="true"]').innerText() === 'Chat');
+  await page.locator('.mode-switch').getByRole('radio', { name: 'Code', exact: true }).click();
+  await page.getByRole('alert').filter({ hasText: writeError }).waitFor({ timeout: 30_000 });
+  check('switching back to Code remains operable and reports the write error', await page.locator('.mode-switch [aria-checked="true"]').innerText() === 'Code');
+  const failedWriteBarrier = await page.evaluate(() => window.asterNative.writePreferences({ mode: 'code' }));
+  check('the write IPC failure is returned without throwing', failedWriteBarrier.ok === false && failedWriteBarrier.error === writeError, JSON.stringify(failedWriteBarrier));
+  check('failed writes preserve the malformed fixture bytes', readFileSync(profilePath).equals(malformedProfile));
+  await capture('round3-preferences-write-error.png');
+
+  await electronApp.close();
+  electronApp = null;
+  writeFileSync(profilePath, profileBackup);
+  electronApp = await _electron.launch({
+    executablePath: electronPath,
+    args: [`--user-data-dir=${join(testRoot, 'electron-user-data')}`, mainEntry],
+    cwd: repo, env, timeout: 90_000,
+  });
+  page = await electronApp.firstWindow({ timeout: 90_000 });
+  page.setDefaultTimeout(30_000);
+  await page.waitForLoadState('domcontentloaded');
+  await page.locator('.desktop-shell').waitFor({ timeout: 60_000 });
+  await page.addInitScript(installWireObserver);
+  await page.reload();
+  await page.locator('.sidebar-brand > .sr-only').filter({ hasText: 'Ready' }).waitFor({ timeout: 60_000 });
+  await page.waitForFunction(id => window.__asterTestWire.replies.some(reply => reply.method === 'session.getMessages'
+    && reply.frame.ok === true && window.__asterTestWire.requests.some(request => request.method === 'session.getMessages'
+      && request.id === reply.frame.id && request.params?.sessionId === id)), newSessionId, { timeout: 60_000 });
+  check('restoring the isolated profile bytes restores the same empty session', JSON.parse(readFileSync(profilePath, 'utf8')).selection?.sessionId === newSessionId
+    && await page.locator('.conversation-scroll .message').count() === 0
+    && await page.getByRole('textbox', { name: 'Message Aster' }).isEnabled());
 
   console.log(`PASS: ${checks.length} round-3 checks against the real Electron app.`);
 } finally {

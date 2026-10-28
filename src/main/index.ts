@@ -4,6 +4,7 @@ import { createInterface } from 'node:readline';
 import { resolve, join } from 'node:path';
 import { promisify } from 'node:util';
 import { createWindow } from './window';
+import { waitForPreferenceWrites } from './preferences';
 
 let host: ChildProcessWithoutNullStreams | undefined;
 let hostExited = false;
@@ -43,10 +44,10 @@ async function stopHost(): Promise<void> {
 }
 
 app.on('before-quit', event => {
-  if (quitting || !host || hostExited) return;
+  if (quitting) return;
   event.preventDefault();
   quitting = true;
-  void stopHost().catch(error => {
+  void waitForPreferenceWrites().then(stopHost).catch(error => {
     dialog.showErrorBox('Aster shutdown failed', error instanceof Error ? error.message : 'Host shutdown could not be confirmed.');
   }).finally(() => app.quit());
 });

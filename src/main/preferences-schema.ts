@@ -1,13 +1,7 @@
-/** Pure schema for the preferences IPC channel; no Electron import so it can be tested directly. */
-export type WorkspaceMode = 'chat' | 'code';
+import type { UiPreferences, WorkspaceMode } from '@thinkrail/contracts';
 
-export interface UiPreferences {
-  sidebarWidth?: number;
-  selection?: { workspaceId: string; sessionId: string } | null;
-  mode?: WorkspaceMode;
-  sidebarOpen?: boolean;
-  previewRatio?: number;
-}
+/** Pure schema for the preferences IPC channel; no Electron import so it can be tested directly. */
+export type { UiPreferences, WorkspaceMode };
 
 export const SIDEBAR_MIN_WIDTH = 240;
 export const SIDEBAR_MAX_WIDTH = 420;

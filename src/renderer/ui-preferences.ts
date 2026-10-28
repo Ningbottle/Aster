@@ -5,6 +5,19 @@ const SIDEBAR_WIDTH_KEY = 'aster.sidebar-width';
 
 /** Mirror of what main holds on disk; `mode` and `sidebarOpen` are read from here, not from storage. */
 let loaded: UiPreferences = {};
+let preferenceError: string | undefined;
+const preferenceErrorHandlers = new Set<(message: string | undefined) => void>();
+
+function reportPreferenceError(message: string | undefined): void {
+  preferenceError = message;
+  for (const handler of preferenceErrorHandlers) handler(message);
+}
+
+export function onPreferenceError(handler: (message: string | undefined) => void): () => void {
+  preferenceErrorHandlers.add(handler);
+  if (preferenceError) handler(preferenceError);
+  return () => preferenceErrorHandlers.delete(handler);
+}
 
 /** Filled before the first render, so the shell starts already restored. */
 export function loadedPreferences(): UiPreferences {
@@ -23,26 +36,30 @@ export function applyPreferences(store: Storage, prefs: UiPreferences): void {
 }
 
 export async function seedPreferences(): Promise<void> {
-  const prefs = await readPreferences();
+  let prefs: UiPreferences;
+  try {
+    prefs = await readPreferences();
+  } catch {
+    loaded = {};
+    reportPreferenceError('Saved interface preferences could not be read.');
+    return;
+  }
+
   loaded = { ...prefs };
+  reportPreferenceError(undefined);
   if (prefs.sidebarWidth === undefined && !prefs.selection) return;
   try {
     applyPreferences(localStorage, prefs);
-  } catch (error) {
-    console.warn('The stored interface preferences could not be restored.', error);
+  } catch {
+    reportPreferenceError('Saved interface preferences were loaded but could not be restored in this window.');
   }
 }
 
-let queue: Promise<void> = Promise.resolve();
-
-/** Serialized so two quick changes cannot interleave their read-modify-write in main. */
+/** Each update is sent immediately; main serializes disk read-modify-write operations. */
 export function persistPreference(patch: UiPreferences): void {
   loaded = { ...loaded, ...patch };
-  if (typeof window === 'undefined' || !window.asterNative) return;
-  queue = queue
-    .then(async () => {
-      const result = await writePreferences(patch);
-      if (!result.ok) console.warn('The interface preference could not be saved.', result.error);
-    })
-    .catch(error => { console.warn('The interface preference could not be saved.', error); });
+  void writePreferences(patch).then(result => {
+    if (result.ok) reportPreferenceError(undefined);
+    else reportPreferenceError(result.error ?? 'Interface preferences could not be saved.');
+  });
 }
